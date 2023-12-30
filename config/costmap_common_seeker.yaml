@@ -1,0 +1,20 @@
+robot_radius: 0.4
+footprint_padding: 0.01 #0.01 
+
+robot_base_frame: seeker/base_link
+update_frequency: 5.0 #4.0
+publish_frequency: 3.0 #4.0 #3.0
+transform_tolerance: 0.5
+
+resolution: 0.05 #0.05
+
+obstacle_range: 6.0 #5.5
+raytrace_range: 7.0 #6.0
+
+obstacles_laser:
+    observation_sources: laser
+    laser: {data_type: LaserScan, clearing: true, marking: true, topic: /seeker/scan, inf_is_valid: true}
+    subscribe_to_updates: true
+
+inflation:
+    inflation_radius: 1.13 #1.0 #0.1

@@ -1,0 +1,37 @@
+controller_frequency: 5.0
+recovery_behaviour_enabled: true
+
+
+NavfnROS:
+  allow_unknown: true
+  default_tolerance: 0.1
+
+DWAPlannerROS:
+  # Robot configuration parameters  
+  acc_lim_x: 2.5
+  acc_lim_y: 0
+  acc_lim_th: 3.2
+
+  max_vel_x: 1.0 #0.5
+  min_vel_x: 0.0
+  max_vel_y: 0
+  min_vel_y: 0
+
+  max_vel_trans: 1.5 #0.5
+  min_vel_trans: 0.0
+  max_vel_theta: 0.5 #1.0 
+  min_vel_theta: -0.5
+
+  prune_plan: false
+  
+  # Goal Tolerance Parameters
+  yaw_goal_tolerance: 0.5 #0.1
+  xy_goal_tolerance: 1.0 #0.2
+  latch_xy_goal_tolerance: false #false
+
+  # # Forward Simulation Parameters
+  sim_time: 3.0
+  sim_granularity: 0.05
+  vx_samples: 15
+  vy_samples: 0
+  vtheta_samples: 30
