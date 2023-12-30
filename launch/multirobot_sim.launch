@@ -1,7 +1,7 @@
 <launch>
   <!-- No namespace here as we will share this description. 
        Access with slash at the beginning -->
-  <arg name="model" default="burger" doc="model type [burger, waffle, waffle_pi]"/>
+  <arg name="model" default="waffle_pi" doc="model type [burger, waffle, waffle_pi]"/>
   <arg name="first_tb3"  default="hider"/>
   <arg name="second_tb3" default="seeker"/>
 
@@ -25,7 +25,7 @@
   </include>  
 
   <group ns = "$(arg first_tb3)">
-    <param name="robot_description" command="$(find xacro)/xacro --inorder $(find turtlebot3_description)/urdf/turtlebot3_$(arg model).urdf.xacro" />
+    <param name="robot_description" command="$(find xacro)/xacro --inorder $(find turtlebot3_description)/urdf/turtlebot3_$(arg model)_$(arg first_tb3).urdf.xacro" />
 
     <node pkg="robot_state_publisher" type="robot_state_publisher" name="robot_state_publisher" output="screen">
       <param name="publish_frequency" type="double" value="50.0" />
@@ -36,7 +36,7 @@
   </group>
 
   <group ns = "$(arg second_tb3)">
-    <param name="robot_description" command="$(find xacro)/xacro --inorder $(find turtlebot3_description)/urdf/turtlebot3_$(arg model).urdf.xacro" />
+    <param name="robot_description" command="$(find xacro)/xacro --inorder $(find turtlebot3_description)/urdf/turtlebot3_$(arg model)_$(arg second_tb3).urdf.xacro " />
 
     <node pkg="robot_state_publisher" type="robot_state_publisher" name="robot_state_publisher" output="screen">
       <param name="publish_frequency" type="double" value="50.0" />
