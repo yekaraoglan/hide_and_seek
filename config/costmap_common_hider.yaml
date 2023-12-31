@@ -14,7 +14,7 @@ raytrace_range: 15.0 #6.0
 
 obstacles_laser:
     observation_sources: laser
-    laser: {data_type: LaserScan, clearing: true, marking: false, topic: /hider/scan, inf_is_valid: true}
+    laser: {data_type: LaserScan, clearing: true, marking: true, topic: /hider/scan, inf_is_valid: true}
 
 inflation:
     inflation_radius: 1.13 #1.0 #0.1
