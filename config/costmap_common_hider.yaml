@@ -1,5 +1,5 @@
 #footprint: [[-0.6, -0.6], [-0.6, 0.6], [0.6, 0.6], [0.6, -0.6]]
-robot_radius: 0.8485
+robot_radius: 0.45
 footprint_padding: 0.01 #0.01 
 
 robot_base_frame: hider/base_link
@@ -9,12 +9,12 @@ transform_tolerance: 0.5
 
 resolution: 0.05 #0.05
 
-obstacle_range: 13.0 #5.5
-raytrace_range: 15.0 #6.0
+obstacle_range: 9.0 #5.5
+raytrace_range: 10.0 #6.0
 
 obstacles_laser:
     observation_sources: laser
     laser: {data_type: LaserScan, clearing: true, marking: true, topic: /hider/scan, inf_is_valid: true}
 
 inflation:
-    inflation_radius: 1.13 #1.0 #0.1
+    inflation_radius: 0.7 #1.0 #0.1
