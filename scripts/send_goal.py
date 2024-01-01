@@ -13,7 +13,6 @@ def movebase_client(args):
     hider_client = actionlib.SimpleActionClient('/hider/move_base',MoveBaseAction)
     seeker_client.wait_for_server()
     hider_client.wait_for_server()
-
     if args.robot == 'seeker':
         client = seeker_client
     elif args.robot == 'hider':
@@ -41,10 +40,10 @@ def movebase_client(args):
 if __name__ == '__main__':
     try:
         parser = argparse.ArgumentParser()
-        parser.add_argument('robot', help='robot name')
-        parser.add_argument('x', help='x coordinate')
-        parser.add_argument('y', help='y coordinate')
-        parser.add_argument('yaw', help='yaw angle')
+        parser.add_argument('--robot', type=str, help='robot name')
+        parser.add_argument('--x', type=float, help='x coordinate')
+        parser.add_argument('--y', type=float, help='y coordinate')
+        parser.add_argument('--yaw', type=float, help='yaw angle')
         args = parser.parse_args()
         rospy.init_node('movebase_client_py')
         result = movebase_client(args)
