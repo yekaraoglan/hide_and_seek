@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# license removed for brevity
 
 import rospy
 import actionlib
@@ -8,7 +7,6 @@ import argparse
 from tf.transformations import quaternion_from_euler
 
 def movebase_client(args):
-
     seeker_client = actionlib.SimpleActionClient('/seeker/move_base',MoveBaseAction)
     hider_client = actionlib.SimpleActionClient('/hider/move_base',MoveBaseAction)
     seeker_client.wait_for_server()
@@ -27,7 +25,12 @@ def movebase_client(args):
     goal.target_pose.header.stamp = rospy.Time.now()
     goal.target_pose.pose.position.x = float(args.x)
     goal.target_pose.pose.position.y = float(args.y)
-    goal.target_pose.pose.orientation.w = quaternion_from_euler(0, 0, float(args.yaw))[3]
+    goal.target_pose.pose.position.z = 0.0
+    q = quaternion_from_euler(0.0, 0.0, float(args.yaw))
+    goal.target_pose.pose.orientation.x = q[0]
+    goal.target_pose.pose.orientation.y = q[1]
+    goal.target_pose.pose.orientation.z = q[2]
+    goal.target_pose.pose.orientation.w = q[3]
 
     rospy.loginfo("Sending goal")
     client.send_goal(goal)
