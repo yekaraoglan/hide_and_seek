@@ -44,10 +44,10 @@ def movebase_client(args):
 if __name__ == '__main__':
     try:
         parser = argparse.ArgumentParser()
-        parser.add_argument('robot', help='robot name')
-        parser.add_argument('x', help='x coordinate')
-        parser.add_argument('y', help='y coordinate')
-        parser.add_argument('yaw', help='yaw angle')
+        parser.add_argument('--robot', help='robot name')
+        parser.add_argument('--x', help='x coordinate')
+        parser.add_argument('--y', help='y coordinate')
+        parser.add_argument('--yaw', help='yaw angle')
         args = parser.parse_args()
         rospy.init_node('movebase_client_py')
         result = movebase_client(args)
