@@ -937,7 +937,7 @@
         <enable_wind>0</enable_wind>
         <kinematic>0</kinematic>
         <pose>0 0 0 0 -0 0</pose>
-        <gravity>0</gravity>
+        <gravity>1</gravity>
         <visual name='visual'>
           <geometry>
             <box>
@@ -1039,7 +1039,7 @@
         <enable_wind>0</enable_wind>
         <kinematic>0</kinematic>
         <pose>0 0 0 0 -0 0</pose>
-        <gravity>0</gravity>
+        <gravity>1</gravity>
         <visual name='visual'>
           <geometry>
             <box>
@@ -1243,7 +1243,7 @@
         <enable_wind>0</enable_wind>
         <kinematic>0</kinematic>
         <pose>0 0 0 0 -0 0</pose>
-        <gravity>0</gravity>
+        <gravity>1</gravity>
         <visual name='visual'>
           <geometry>
             <box>
@@ -1345,7 +1345,7 @@
         <enable_wind>0</enable_wind>
         <kinematic>0</kinematic>
         <pose>0 0 0 0 -0 0</pose>
-        <gravity>0</gravity>
+        <gravity>1</gravity>
         <visual name='visual'>
           <geometry>
             <box>
@@ -1447,7 +1447,7 @@
         <enable_wind>0</enable_wind>
         <kinematic>0</kinematic>
         <pose>0 0 0 0 -0 0</pose>
-        <gravity>0</gravity>
+        <gravity>1</gravity>
         <visual name='visual'>
           <geometry>
             <box>
