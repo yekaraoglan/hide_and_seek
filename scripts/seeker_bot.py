@@ -232,9 +232,9 @@ class SeekerBot:
         self.hider_relative_angle = math.atan2(self.hider_coordinates[1] - self.y, self.hider_coordinates[0] - self.x)"""
 
         # Linear velocity:
-        linear_velocity = 0.7 # min(self.hider_distance, 2.5) # 4.5 m/s
+        linear_velocity = 0.75 # min(self.hider_distance, 2.5) # 4.5 m/s
         # Angular velocity:
-        angular_velocity = self.hider_relative_angle
+        angular_velocity = self.hider_relative_angle * 0.5 # theta * 0.5 rad/s
 
         return linear_velocity, angular_velocity
     
@@ -308,10 +308,7 @@ class SeekerBot:
             self.traversing = False
             rospy.loginfo_throttle(5, 'I\'m gonna getcha, Jerry!')
             # Calculate the linear and angular velocities to move directly to the hider bot.
-            if self.protocol == 'pursuit':  # When lost sight of the hider bot.
-                linear_velociy_x, angular_velocity_z = 0.0, 0.0 # self.hider_relative_angle
-            elif self.protocol == 'OK': # When the hider bot is in sight.
-                linear_velociy_x, angular_velocity_z = 0.0, 0.0 # self.move_directly_to_hider()
+            linear_velociy_x, angular_velocity_z = self.move_directly_to_hider()
             # Publish the velocity commands.
             self.pub.publish(Twist(linear=Point(x=linear_velociy_x), angular=Point(z=angular_velocity_z)))
         else:
@@ -360,7 +357,7 @@ class SeekerBot:
         theta = normalized_cX * fov
 
         rospy.loginfo_throttle(5, '#!# Hider angle: ' + str(theta))
-        rospy.loginfo_throttle(5, '#!# Seeker yaw: ' + str(self.yaw)) 
+        # rospy.loginfo_throttle(5, '#!# Seeker yaw: ' + str(self.yaw)) 
         self.hider_relative_angle = degree_to_radian(theta)
 
 
@@ -490,7 +487,6 @@ class SeekerBot:
                         self.move_base.cancel_goal()
                         self.move_base.cancel_all_goals()
                     self.state = 'chasing'
-                    self.protocol = 'OK'
                     self.traversing = False
 
                     rospy.loginfo_throttle(5, 'You better run!')
@@ -499,16 +495,6 @@ class SeekerBot:
                     self.pub.publish(Twist(linear=Point(x=lin_vec), angular=Point(z=ang_vec)))
                     # if self.start_moving_to_waypoint():
                     #   rospy.loginfo("Goal execution done!")
-                elif M["m00"] == 0 and self.state == 'chasing':
-                    """# Cancel the current goal.
-                    if self.move_base.get_state() not in [actionlib.GoalStatus.PENDING, actionlib.GoalStatus.SUCCEEDED]:
-                        rospy.loginfo_once('Canceling the current goal')
-                        self.move_base.cancel_goal()
-                        self.move_base.cancel_all_goals()"""
-                    self.protocol = 'pursuit'
-                    self.hider_relative_angle = 0.0
-                    # Implement pursuit protocol.
-                    rospy.loginfo_throttle(5, 'I\'m in hot pursuit!')
                 else:
                     self.state = 'searching'
                     rospy.loginfo_throttle(5, 'Jerry not detected!')
