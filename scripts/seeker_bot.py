@@ -22,9 +22,9 @@
         [X]         2.2.2. Implement detection method.
         [X]         2.2.3. Compute hider bot coordinates.
         [~]     2.3. Implement the searching state machine.
-        [ ] 3. Chasing mode.
-        [ ] 4. Test the state machine.
-        [ ] 5. Implement the main function.
+        [~] 3. Chasing mode.
+        [~] 4. Test the state machine.
+        [ ] 5. Add safety protocol.
 """
 
 import rospy
@@ -46,6 +46,12 @@ import math
 import time
 import sys
 import os
+
+# Helper functions:
+
+def eucledian_distance(x1, y1, x2, y2):
+    # Calculate the distance between two points.
+    return np.sqrt((x1 - x2)**2 + (y1 - y2)**2)
 
 # Seeker bot class:
 class SeekerBot:
@@ -98,6 +104,9 @@ class SeekerBot:
 
         # Initialize the traversing flag:
         self.traversing = False
+
+        # Initialize the safety protocol:
+        self.protocol = 'none' # none, pursuit, evasion
 
         # Initialize the parameters:
         # ...
@@ -193,17 +202,35 @@ class SeekerBot:
         # Send the goal to the robot's navigation system.
         rospy.loginfo("# Debugging move_base send_goal called")
         rospy.loginfo("Here I come, Jerry!")
-        self.move_base.send_goal(self.waypoint)
+        if self.move_base.get_state() is not actionlib.GoalStatus.ACTIVE:
+            # It's safe to send a new goal
+            self.move_base.send_goal(self.waypoint)
+        else:
+            rospy.logwarn("Tried to send a new goal while move_base was still processing the current goal")
         self.traversing = True
-        # wait = self.move_base.wait_for_result()
-        return self.move_base.get_state()
+        wait = self.move_base.wait_for_result()
+        if not wait:
+            rospy.logerr("Action server not available!")
+            rospy.signal_shutdown("Action server not available!")
+        else:
+            return self.move_base.get_state()
         
     def move_directly_to_hider(self):
-        # Return linear and angular velocities to move directly to the hider bot.
+        rospy.loginfo_throttle(1,'#!# Debugging move_directly_to_hider: angle:' + str(self.hider_relative_angle))
+
+        """# Return linear and angular velocities to move directly to the hider bot.
+        rospy.loginfo('#!# Debugging move_directly_to_hider: distance:' + str(self.hider_distance) + ', angle:' + str(self.hider_relative_angle))
+        rospy.loginfo('#!# Debugging move_directly_to_hider: x-' + str(self.hider_coordinates[0]) + ', y-' + str(self.hider_coordinates[1]))
+        # Distance to the hider bot:
+        self.hider_distance = eucledian_distance(self.x, self.y, self.hider_coordinates[0], self.hider_coordinates[1])
+
+        # Calculate the angle between the robot and the hider bot.
+        self.hider_relative_angle = math.atan2(self.hider_coordinates[1] - self.y, self.hider_coordinates[0] - self.x)"""
+
         # Linear velocity:
-        linear_velocity = min(self.hider_distance, 3.5) # 4.5 m/s
+        linear_velocity = 2.5 # min(self.hider_distance, 2.5) # 4.5 m/s
         # Angular velocity:
-        angular_velocity = self.hider_relative_angle
+        angular_velocity = -self.hider_relative_angle
 
         return linear_velocity, angular_velocity
     
@@ -219,7 +246,7 @@ class SeekerBot:
             rospy.loginfo_throttle(10,"Goal execution in progress.")
         elif state == actionlib.GoalStatus.PENDING:
             # The goal has yet to be processed by the action server
-            self.traversing = True
+            self.traversing = False
             rospy.loginfo("Goal execution pending.")
         elif state == actionlib.GoalStatus.PREEMPTED:
             # The goal received a cancel request after it started executing
@@ -253,7 +280,7 @@ class SeekerBot:
     # State machine:
     # For controlling the seeker bot movement and behavior.
     def state_machine(self):
-        rospy.loginfo_throttle(5, '## Debugging state machine: ' + self.state, )
+        rospy.loginfo_throttle(5, '## Debugging state machine: ' + self.state)
         # Waiting state:
         if self.state == 'waiting':
             self.pub.publish(Twist(linear=Point(x=0), angular=Point(z=0)))
@@ -275,9 +302,12 @@ class SeekerBot:
         # Chasing state:
         elif self.state == 'chasing':
             self.traversing = False
-            rospy.loginfo('I\'m gonna getcha, Jerry!')
+            rospy.loginfo_throttle(5, 'I\'m gonna getcha, Jerry!')
             # Calculate the linear and angular velocities to move directly to the hider bot.
-            linear_velociy_x, angular_velocity_z = self.move_directly_to_hider()
+            if self.protocol == 'pursuit':
+                linear_velociy_x, angular_velocity_z = 0.0, self.hider_relative_angle
+            elif self.protocol == 'OK':
+                linear_velociy_x, angular_velocity_z = self.move_directly_to_hider()
             # Publish the velocity commands.
             self.pub.publish(Twist(linear=Point(x=linear_velociy_x), angular=Point(z=angular_velocity_z)))
         else:
@@ -354,7 +384,7 @@ class SeekerBot:
 
     # Occupancy grid callback:
     def costmap_callback(self, msg):
-        rospy.loginfo('### Debugging costmap_callback callback: ' + str(type(msg)))
+        rospy.loginfo_throttle(5, '### Debugging Costmap_callback callback: ' + str(type(msg)))
 
         # Get the map data.
         self.map_data = msg.data
@@ -378,9 +408,9 @@ class SeekerBot:
             if self.show_map:    
                 # Show the map data.
                 self.map_img = cv2.convertScaleAbs(self.map_data)
-                cv2.imshow('Occupancy Grid', self.map_img)
-                cv2.waitKey(1)
-                cv2.destroyAllWindows()
+                # cv2.imshow('Occupancy Grid', self.map_img)
+                # cv2.waitKey(1)
+                # cv2.destroyAllWindows()
                 self.show_map = False # Show the map only once.
         else:
             rospy.loginfo('Map data is not valid!')
@@ -427,14 +457,13 @@ class SeekerBot:
             self.hider_distance = msg.ranges[int(self.hider_relative_angle)]
 
             # Calculate hider bot coordinates using the distance and the angle and the seeker bot coordinates.
-            self.hider_coordinates = self.calculate_hider_coordinates()
+            # self.hider_coordinates = self.calculate_hider_coordinates()
 
     # Image callback:
-    # FIXME: This callback is not actively being called.
     def image_callback(self, msg):
-        try:  
-            if self.state == 'chasing' or self.state == 'searching':    
-                rospy.loginfo('### Debugging image callback' + str(type(msg)))
+        try:
+            if self.state == 'searching' or self.state == 'chasing':    
+                # rospy.loginfo('### Debugging image callback' + str(type(msg)))
                 # Convert the image to OpenCV format.
                 self.image = self.bridge.imgmsg_to_cv2(msg, "bgr8") # Blue_Green_Red 8-bit format
 
@@ -442,29 +471,42 @@ class SeekerBot:
                 
                 # Change state from 'searching' to 'chasing' if red object detected.
                 if M["m00"] > 0:
-                    rospy.loginfo('Haha, Jerry I see you!')
+                    rospy.loginfo_throttle(5, 'Haha, Jerry I see you!')
                     # Calculate the angle between the robot and the red object.
                     self.calculate_hider_relative_angle(M)
 
                     self.state = 'chasing'
+                    self.protocol = 'OK'
                     self.traversing = False
-                    self.move_base.cancel_all_goals()
-                    rospy.loginfo('You better run!')
+                    # Cancel the current goal.
+                    if self.move_base.get_state() not in [actionlib.GoalStatus.PENDING, actionlib.GoalStatus.SUCCEEDED]:
+                        self.move_base.cancel_goal()
+                        self.move_base.cancel_all_goals()
+                    rospy.loginfo_throttle(5, 'You better run!')
                     # self.set_waypoint(self.hider_coordinates[0], self.hider_coordinates[1], self.yaw)
                     lin_vec, ang_vec = self.move_directly_to_hider()
                     self.pub.publish(Twist(linear=Point(x=lin_vec), angular=Point(z=ang_vec)))
                     # if self.start_moving_to_waypoint():
                     #   rospy.loginfo("Goal execution done!")
+                elif M["m00"] == 0 and self.state == 'chasing':
+                    # Cancel the current goal.
+                    if self.move_base.get_state() not in [actionlib.GoalStatus.PENDING, actionlib.GoalStatus.SUCCEEDED]:
+                        self.move_base.cancel_goal()
+                        self.move_base.cancel_all_goals()
+                    self.protocol = 'pursuit'
+                    self.hider_relative_angle = 45.0
+                    # Implement pursuit protocol.
+                    rospy.loginfo_throttle(5, 'I\'m in hot pursuit!')
                 else:
                     self.state = 'searching'
-                    rospy.loginfo('Jerry not detected!')
+                    rospy.loginfo_throttle(5, 'Jerry not detected!')
                     
 
                 # Show the images:
-                cv2.imshow('Original Image', self.image)
+                # cv2.imshow('Original Image', self.image)
                 # cv2.imshow('Red Objects Detection', result)
-                cv2.waitKey(1)
-                cv2.destroyAllWindows()
+                # cv2.waitKey(1)
+                # cv2.destroyAllWindows()
             else:
                 pass
         except CvBridgeError as e:
