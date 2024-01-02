@@ -53,6 +53,10 @@ def eucledian_distance(x1, y1, x2, y2):
     # Calculate the distance between two points.
     return np.sqrt((x1 - x2)**2 + (y1 - y2)**2)
 
+def degree_to_radian(angle):
+    # Convert angle from degrees to radians.
+    return angle * np.pi / 180.0
+
 # Seeker bot class:
 class SeekerBot:
     def __init__(self):
@@ -99,7 +103,7 @@ class SeekerBot:
         self.show_map = True
 
         # Initialize the move_base client:
-        self.move_base = actionlib.SimpleActionClient('/seeker/move_base',MoveBaseAction)
+        self.move_base = actionlib.SimpleActionClient('/seeker/move_base', MoveBaseAction)
         self.move_base.wait_for_server()
 
         # Initialize the traversing flag:
@@ -183,7 +187,7 @@ class SeekerBot:
         # Convert the random cell to a pose.
         waypoint_pose = self.convert_cell_to_pose(random_cell, cell_angle)
         self.set_waypoint(waypoint_pose.pose.position.x, waypoint_pose.pose.position.y, waypoint_pose.pose.orientation.w)
-        rospy.loginfo('Waypoint: ' + str(waypoint_pose.pose.position.x) + ', ' + str(waypoint_pose.pose.position.y) + ', ' + str(waypoint_pose.pose.orientation.w))
+        rospy.loginfo('Waypoint: ' + str(round(waypoint_pose.pose.position.x,2)) + ', ' + str(round(waypoint_pose.pose.position.y,2)))
 
     def set_waypoint(self, x, y, yaw):
         self.waypoint = MoveBaseGoal()
@@ -228,9 +232,9 @@ class SeekerBot:
         self.hider_relative_angle = math.atan2(self.hider_coordinates[1] - self.y, self.hider_coordinates[0] - self.x)"""
 
         # Linear velocity:
-        linear_velocity = 2.5 # min(self.hider_distance, 2.5) # 4.5 m/s
+        linear_velocity = 0.7 # min(self.hider_distance, 2.5) # 4.5 m/s
         # Angular velocity:
-        angular_velocity = -self.hider_relative_angle
+        angular_velocity = self.hider_relative_angle
 
         return linear_velocity, angular_velocity
     
@@ -287,7 +291,7 @@ class SeekerBot:
             # self.pub.publish(Twist(linear=Point(x=0.0), angular=Point(z=90.0))) # Spin in place.
         # Searching state:
         elif self.state == 'searching':
-            if self.traversing == False:
+            if self.traversing == False and self.move_base.get_state() is not actionlib.GoalStatus.ACTIVE:
                 # Randomly select a free cell in the map.
                 rospy.loginfo('I am going... this way!')
                 self.random_waypoint()
@@ -304,10 +308,10 @@ class SeekerBot:
             self.traversing = False
             rospy.loginfo_throttle(5, 'I\'m gonna getcha, Jerry!')
             # Calculate the linear and angular velocities to move directly to the hider bot.
-            if self.protocol == 'pursuit':
-                linear_velociy_x, angular_velocity_z = 0.0, self.hider_relative_angle
-            elif self.protocol == 'OK':
-                linear_velociy_x, angular_velocity_z = self.move_directly_to_hider()
+            if self.protocol == 'pursuit':  # When lost sight of the hider bot.
+                linear_velociy_x, angular_velocity_z = 0.0, 0.0 # self.hider_relative_angle
+            elif self.protocol == 'OK': # When the hider bot is in sight.
+                linear_velociy_x, angular_velocity_z = 0.0, 0.0 # self.move_directly_to_hider()
             # Publish the velocity commands.
             self.pub.publish(Twist(linear=Point(x=linear_velociy_x), angular=Point(z=angular_velocity_z)))
         else:
@@ -344,7 +348,7 @@ class SeekerBot:
         cY = int(M["m01"] / M["m00"])
 
         # Using the robot yaw and the x coordinate of the red object.
-        fov = 90 # Field of view of the camera in degrees. --> Check this value.
+        fov = 82.3/2 # Field of view of the camera in degrees. --> Check this value.
 
         # Image width
         image_width = self.image.shape[1]
@@ -355,8 +359,14 @@ class SeekerBot:
         # Calculate the angle (in degrees)
         theta = normalized_cX * fov
 
+        rospy.loginfo_throttle(5, '#!# Hider angle: ' + str(theta))
+        rospy.loginfo_throttle(5, '#!# Seeker yaw: ' + str(self.yaw)) 
+        self.hider_relative_angle = degree_to_radian(theta)
+
+
         # Calculate the angle relative to the robot
-        self.hider_relative_angle = theta - self.yaw
+        # self.hider_relative_angle = theta - self.yaw
+        # rospy.loginfo_throttle(5, 'Hider relative angle: ' + str(self.hider_relative_angle))
 
     # Check if the seeker bot is in a safe position.
     def safety_check(self):
@@ -474,27 +484,29 @@ class SeekerBot:
                     rospy.loginfo_throttle(5, 'Haha, Jerry I see you!')
                     # Calculate the angle between the robot and the red object.
                     self.calculate_hider_relative_angle(M)
-
+                    # Cancel the current goal.
+                    if self.state != 'chasing' and self.move_base.get_state() not in [actionlib.GoalStatus.PENDING, actionlib.GoalStatus.SUCCEEDED]:
+                        rospy.loginfo_once('Canceling the current goal')
+                        self.move_base.cancel_goal()
+                        self.move_base.cancel_all_goals()
                     self.state = 'chasing'
                     self.protocol = 'OK'
                     self.traversing = False
-                    # Cancel the current goal.
-                    if self.move_base.get_state() not in [actionlib.GoalStatus.PENDING, actionlib.GoalStatus.SUCCEEDED]:
-                        self.move_base.cancel_goal()
-                        self.move_base.cancel_all_goals()
+
                     rospy.loginfo_throttle(5, 'You better run!')
                     # self.set_waypoint(self.hider_coordinates[0], self.hider_coordinates[1], self.yaw)
-                    lin_vec, ang_vec = self.move_directly_to_hider()
+                    lin_vec, ang_vec = 0.0, 0.0 # self.move_directly_to_hider()
                     self.pub.publish(Twist(linear=Point(x=lin_vec), angular=Point(z=ang_vec)))
                     # if self.start_moving_to_waypoint():
                     #   rospy.loginfo("Goal execution done!")
                 elif M["m00"] == 0 and self.state == 'chasing':
-                    # Cancel the current goal.
+                    """# Cancel the current goal.
                     if self.move_base.get_state() not in [actionlib.GoalStatus.PENDING, actionlib.GoalStatus.SUCCEEDED]:
+                        rospy.loginfo_once('Canceling the current goal')
                         self.move_base.cancel_goal()
-                        self.move_base.cancel_all_goals()
+                        self.move_base.cancel_all_goals()"""
                     self.protocol = 'pursuit'
-                    self.hider_relative_angle = 45.0
+                    self.hider_relative_angle = 0.0
                     # Implement pursuit protocol.
                     rospy.loginfo_throttle(5, 'I\'m in hot pursuit!')
                 else:
