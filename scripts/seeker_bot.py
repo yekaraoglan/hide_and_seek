@@ -57,10 +57,11 @@ class SeekerBot:
         self.pub = rospy.Publisher('/seeker/cmd_vel', Twist, queue_size=10)
 
         # Initialize the subscriber:
-        self.sub = rospy.Subscriber('/seeker/odom', Odometry, self.odom_callback)
-        self.sub = rospy.Subscriber('/seeker/scan', LaserScan, self.scan_callback)
-        self.sub = rospy.Subscriber('/seeker/camera/rgb/image_raw', Image, self.image_callback)
-        self.sub = rospy.Subscriber('/seeker/occupancy_grid', OccupancyGrid, self.occupancy_grid_callback)
+        self.odom_sub = rospy.Subscriber('/seeker/odom', Odometry, self.odom_callback)
+        self.scan_sub = rospy.Subscriber('/seeker/scan', LaserScan, self.scan_callback)
+        self.cam_sub = rospy.Subscriber('/seeker/camera/rgb/image_raw', Image, self.image_callback)
+        self.occ_grid_sub = rospy.Subscriber('/seeker/move_base/global_costmap/costmap', OccupancyGrid, self.occupancy_grid_callback)
+
 
         # Initialize the timer:
         self.start_time = rospy.get_time()
@@ -178,7 +179,7 @@ class SeekerBot:
 
     def move_to_waypoint(self):
         # Send the goal to the robot's navigation system.
-        rospy.loginfo("Sending goal")
+        rospy.loginfo("Here I come, Jerry!")
         self.move_base.send_goal(self.waypoint)
         self.traversing = True
         wait = self.move_base.wait_for_result()
@@ -187,12 +188,56 @@ class SeekerBot:
             rospy.signal_shutdown("Action server not available!")
         else:
             return self.move_base.get_result()
+        
+    def move_directly_to_hider(self):
+        # Return linear and angular velocities to move directly to the hider bot.
+        # Linear velocity:
+        linear_velocity = min(self.hider_distance, 4.5) # 4.5 m/s
+        # Angular velocity:
+        angular_velocity = self.hider_relative_angle
+
+        return linear_velocity, angular_velocity
+    
+    # State machine:
+    # For controlling the seeker bot movement and behavior.
+    def state_machine(self):
+        rospy.loginfo_throttle(10, '## Debugging state machine: ' + self.state, )
+        # Waiting state:
+        if self.state == 'waiting':
+            self.pub.publish(Twist(linear=Point(x=0), angular=Point(z=0)))
+            # self.pub.publish(Twist(linear=Point(x=0.0), angular=Point(z=90.0))) # Spin in place.
+        # Searching state:
+        elif self.state == 'searching':
+            if self.traversing == False:
+                # Randomly select a free cell in the map.
+                rospy.loginfo('I am searching for you, Jerry!')
+                self.random_waypoint()
+
+                # Send the goal to the robot's navigation system.
+                if self.move_to_waypoint():
+                    self.traversing = False
+                    rospy.loginfo("Goal execution done!")
+            else:
+                rospy.loginfo('I am on my way, Jerry!')
+                pass
+        # Chasing state:
+        elif self.state == 'chasing':
+            self.traversing = False
+            rospy.loginfo('I am gonna getcha, Jerry!')
+            # Calculate the linear and angular velocities to move directly to the hider bot.
+            linear_velociy_x, angular_velocity_z = self.move_directly_to_hider()
+            # Publish the velocity commands.
+            self.pub.publish(Twist(linear=Point(x=linear_velociy_x), angular=Point(z=angular_velocity_z)))
+        else:
+            pass
     
 
     ## Callbacks:
 
     # Occupancy grid callback:
     def occupancy_grid_callback(self, msg):
+        rospy.loginfo('### Debugging occupancy grid callback: ' + str(type(msg)))
+
         # Get the map data.
         self.map_data = msg.data
         # Get the map width.
@@ -208,37 +253,36 @@ class SeekerBot:
         self.map_data = np.array(self.map_data)
         # Reshape the map data to a 2D array.
         self.map_data = self.map_data.reshape(self.map_width, self.map_height)
+        rospy.loginfo('Map data shape: ' + str(self.map_data.shape))
+        rospy.loginfo('Map data type: ' + str(self.map_data.dtype))
 
         # Check if the map data is valid.
         if self.map_data is not None:
-            # Once waiting time is over, start searching.
-            if self.state == 'searching' and self.traversing == False:
-                # Randomly select a free cell in the map.
-                self.random_waypoint()
-
-                # Send the goal to the robot's navigation system.
-                if self.move_to_waypoint():
-                    self.traversing = False
-                    rospy.loginfo("Goal execution done!")
-                
+            # ...
             if self.show_map:    
                 # Show the map data.
-                cv2.imshow('Occupancy Grid', self.map_data)
+                self.map_img = cv2.convertScaleAbs(self.map_data)
+                cv2.imshow('Occupancy Grid', self.map_img)
                 cv2.waitKey(0)
                 cv2.destroyAllWindows()
                 self.show_map = False # Show the map only once.
+        else:
+            rospy.loginfo('Map data is not valid!')
         
     # Timer callback:
     def timer_callback(self, event):
+        # Calculate the elapsed time.
         elapsed_time = rospy.get_time() - self.start_time
         # Check if the waiting time is over.
         if  elapsed_time > self.waiting_time and self.state == 'waiting':
             self.state = 'searching'
+            self.traversing = False
             rospy.loginfo('Waiting time is over!')
             rospy.loginfo('You can hide but you cannot run, Jerry!')
+            # self.pub.publish(Twist(angular=Point(z=0.0))) # Stop spinning.
         elif self.state == 'waiting':
             self.state = 'waiting'
-            rospy.loginfo('Waiting for Jerry to hide!')
+            rospy.loginfo('Waiting for Jerry to hide. 1 2 3 ... ')
         else:
             pass
         
@@ -249,10 +293,14 @@ class SeekerBot:
         self.y = msg.pose.pose.position.y
         self.yaw = msg.pose.pose.orientation.z
 
+        # TODO: Where to put this code?
+        self.state_machine()
+        
+
+
     # Scan callback:
     def scan_callback(self, msg):
         self.scan = msg.ranges
-
         if self.state == 'chasing':
             # Calculate the distance to the hider bot.
             self.hider_distance = msg.ranges[int(self.hider_relative_angle)]
@@ -264,6 +312,7 @@ class SeekerBot:
     def image_callback(self, msg):
         try:
             if self.state != 'waiting':    
+                rospy.loginfo('### Debugging image callback' + str(type(msg)))
                 self.image = self.bridge.imgmsg_to_cv2(msg, "bgr8") # Blue_Green_Red 8-bit format
                 hsv = cv2.cvtColor(self.image, cv2.COLOR_BGR2HSV) # Convert BGR to Hue_Saturation_Value:
 
@@ -313,14 +362,17 @@ class SeekerBot:
                     self.state = 'chasing'
                     self.traversing = False
                     self.move_base.cancel_goal()
-                    self.set_waypoint(self.hider_coordinates[0], self.hider_coordinates[1], self.yaw)
-                    if self.move_to_waypoint():
-                        rospy.loginfo("Goal execution done!")
-                    rospy.loginfo('Haha, Jerry detected!')
+                    # self.set_waypoint(self.hider_coordinates[0], self.hider_coordinates[1], self.yaw)
+                    lin_vec, ang_vec = self.move_directly_to_hider()
+                    self.pub.publish(Twist(linear=Point(x=lin_vec), angular=Point(z=ang_vec)))
+                    # if self.move_to_waypoint():
+                    #   rospy.loginfo("Goal execution done!")
+                    rospy.loginfo('Haha, Jerry I see you!')
 
                 else:
                     self.state = 'searching'
                     rospy.loginfo('Jerry not detected!')
+                    
 
                 # Show the images:
                 cv2.imshow('Original Image', self.image)
