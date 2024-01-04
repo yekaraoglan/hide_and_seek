@@ -90,6 +90,13 @@ def calc_contr_linear_velocity(distance, angle_diff):
     else:
         linear_velocity = distance + 0.25 if (distance < 2.5) else min(distance, 1.25)  # Tune the velocity
     return linear_velocity
+    """linear_velocity = 0.05
+    elif abs(angle_diff) > math.pi/8: # ∠ > 22.5 degrees
+        linear_velocity = min(distance + 0.1, ) if (distance < 2.5) else min(distance + 0.1, 0.55)  # 
+    else:
+        linear_velocity = min(distance, 0.35) + 0.1 if (distance < 2.5) else min(distance, 0.75)  # Tune the velocity
+    return linear_velocity"""
+    
 
 # Seeker bot class:
 class SeekerBot:
@@ -148,7 +155,7 @@ class SeekerBot:
         # Initialize the traversing flag:
         self.traversing = False
         self.traversing_start_time = 0.0
-        self.max_search_period = 60.0
+        self.max_search_period = 120.0
 
         # Initialize the safety protocol:
         # self.protocol = 'none' # none, pursuit, evasion
@@ -248,8 +255,6 @@ class SeekerBot:
         self.waypoint.target_pose.pose.orientation.w = q[3]
 
         return pose
-    
-
 
     def random_waypoint(self):
         # Calculate the waypoint coordinates using the map data.
@@ -320,9 +325,15 @@ class SeekerBot:
         rospy.loginfo_throttle(1,'#~# Debugging move_directly_to_hider: angle= ' + str(round(self.hider_relative_angle, 3)) + ' rad')
 
         # Linear velocity:
-        linear_velocity = min(self.hider_distance, 0.75) # 4.5 m/s
+        linear_velocity = calc_contr_linear_velocity(self.spot_distance, self.hider_relative_angle)# min(self.hider_distance, 0.75) # 4.5 m/s
         # Angular velocity:
-        angular_velocity = self.hider_relative_angle * 0.5 # theta * 0.5 rad/s
+        angular_velocity = -self.hider_relative_angle # theta * 0.5 rad/s
+
+        # Safety force:
+        """neg_lin_vel, neg_ang_vel = self.safety_force(linear_velocity)
+
+        linear_velocity = min(linear_velocity + neg_lin_vel, 2.0)
+        angular_velocity += neg_ang_vel"""
 
         return linear_velocity, angular_velocity
     
@@ -340,7 +351,13 @@ class SeekerBot:
         linear_velocity = calc_contr_linear_velocity(self.spot_distance, angle_diff) # min(distance + 0.1, 0.5) # 0.5 m/s
 
         # Angular velocity:
-        angular_velocity = angle_diff * 0.5 # theta * 0.5 rad/s
+        angular_velocity = -angle_diff * 0.5 # theta * 0.5 rad/s
+
+        # Safety force:
+        """neg_lin_vel, neg_ang_vel = self.safety_force(linear_velocity)
+
+        linear_velocity = min(linear_velocity + neg_lin_vel, 2.0)
+        angular_velocity += neg_ang_vel"""
 
         return linear_velocity, angular_velocity
 
@@ -413,17 +430,17 @@ class SeekerBot:
                 move_state = self.move_base.get_state()
                 self.handle_move_base_state(move_state) 
                 if elapsed_time > self.max_search_period:
-                    rospy.loginfo('I am tired of searching!')
+                    rospy.loginfo_throttle(1,'>w< I am tired of searching!')
                     self.traversing = False
                     # Cancel the current goal.
                     self.move_base.cancel_all_goals()
-                    self.pub.publish(Twist(linear=Point(x=0), angular=Point(z=0)))
+                    # self.pub.publish(Twist(linear=Point(x=0), angular=Point(z=0)))
         # Chasing state:
         elif self.state == 'chasing':
             self.traversing = False
             rospy.loginfo_throttle(5, 'I\'m gonna getcha, Jerry!')
             rospy.loginfo_throttle(1, 'Measures: angle ' + str(round(radian_to_degree(self.hider_relative_angle),2)) + ' degrees, distance ' + str(round(self.hider_distance,3)))
-            if self.hider_distance < 1.0:
+            if self.hider_distance < 1.0 and abs(self.hider_relative_angle) < math.pi/6:
                 rospy.loginfo('I caught you, Jerry. Muahahaha!')
                 rospy.loginfo('Success: angle ' + str(round(radian_to_degree(self.hider_relative_angle),2)) + ' degrees, distance ' + str(round(self.hider_distance,3)))
                 rospy.loginfo('Hider spot: x=' + str(round(self.hider_coordinates[0],2)) + ', y=' + str(round(self.hider_coordinates[1],3)))
@@ -501,42 +518,48 @@ class SeekerBot:
         # rospy.loginfo_throttle(5, 'Hider relative angle: ' + str(self.hider_relative_angle))
     
     def calculate_hider_distance(self):
-        # FIXME: Problem calculating distance
-        # Degree correct
-        # Scan distance incorrect
         # Use scan array data and the hider relative angle to calculate the distance to the hider bot.
         d = int(radian_to_degree(self.hider_relative_angle))
         # neighboring indices to d
-        neighbors = [d-2, d-1, d, d+1, d+2]
+        neighbors = [d-1, d, d+1]
         selected_scan_data = [self.scan[i] for i in neighbors]
         self.hider_distance = min(selected_scan_data + [self.max_scan_range])   # 10.0 is the max range of the laser scan
         rospy.loginfo_throttle(1, '#!# Hider distance: ' + str(round(self.hider_distance,3)))
         rospy.loginfo_throttle(1, '#?# Periphery angle degrees: \n' + str(neighbors))
         rospy.loginfo_throttle(1, '#?# Periphery distances: \n' + str([round(self.scan[i],2) for i in neighbors]))
+
+    # Safety force:
+    def safety_force(self, speed):
+        scan = np.array(self.scan)
+
+        # Add negative speed at angles (indices) where the seeker bot is too close to an obstacle.
+        # Find the angle which is most dangerous
+        caution_direction = np.argmin(np.where(scan<0.17, 10., scan)) # angle degree index
+        # Get the distance to the obstacle at that angle
+        critical_distance = scan[caution_direction]
+
+        # Calculate the angle between the robot and the obstacle.
+        angle = degree_to_radian(caution_direction)
+
+        if angle > math.pi:
+            angle -= 2 * math.pi
+        elif angle < -math.pi:
+            angle += 2 * math.pi
+
+        if abs(angle) > math.pi/2:
+            reverse_linear_velocity = 0.0
+            reverse_angular_velocity = 0.0
+        else:
+            reverse_linear_velocity, reverse_angular_velocity = - calc_contr_linear_velocity(critical_distance, angle) * math.cos(angle) * 0.1, - angle * 0.1 # theta * 0.5 rad/s
+        
+        # Return angle to turn for safety and negative speed to slow down according to the distance and angle of obstacle.
+        return reverse_linear_velocity, reverse_angular_velocity
+        
         
 
     # Check if the seeker bot is in a safe position.
     def safety_check(self):
-        """scan = np.array(self.scan)
-        if np.min(scan) < 0.2:"""
         pass
-        """
-        # Use scan data to check if the seeker bot is near a wall.
-        scan = np.array(self.scan)
-        if np.min((scan[0:15], scan[-15:-1])) < 0.5:
-            rospy.loginfo('I am too close to a wall!')
-            return False
-
-        # Use map data to check if the seeker bot is in a free cell.
-        # Get the seeker bot cell indices.
-        seeker_cell = self.convert_coordinates_to_cell((self.x, self.y))
-        # Check if the seeker bot cell is free.
-        if self.is_free(seeker_cell):
-            return True
-        else:
-            rospy.loginfo('I am stuck!')
-            return False
-        """
 
 
     ## Callbacks:
@@ -633,6 +656,7 @@ class SeekerBot:
                 
                 # Change state from 'searching' to 'chasing' if red object detected.
                 if M["m00"] > 0:
+                    
                     rospy.loginfo_throttle(5, 'Haha, Jerry I see you!')
                     rospy.loginfo_throttle(1, '#># Odom : x=' + str(round(self.x, 3)) + ', y=' + str(round(self.y, 3)) + ', yaw=' + str(round(radian_to_degree(self.yaw), 2)) + ' degrees')
                     # Calculate the angle between the robot and the red object.
@@ -640,7 +664,7 @@ class SeekerBot:
                     # Calculate the distance to the red object.
                     self.calculate_hider_distance()
                     # Calculate hider bot coordinates using the distance and the angle and the seeker bot coordinates.
-                    if self.state == 'chasing' and self.hider_distance > 9.9:
+                    if self.state in ['chasing'] and self.hider_distance > 9.9:
                         pass
                     else:
                         self.hider_coordinates = self.calculate_hider_coordinates()
@@ -651,7 +675,7 @@ class SeekerBot:
                         # self.move_base.cancel_goal()
                         self.move_base.cancel_all_goals()
 
-                        lin_vec, ang_vec = 0., 0. # self.move_directly_to_hider()
+                        lin_vec, ang_vec = 0., 0. # Stop to reassess the situation.
                         self.pub.publish(Twist(linear=Point(x=lin_vec), angular=Point(z=ang_vec)))
                     self.state = 'chasing'
                     self.traversing = False
@@ -668,7 +692,7 @@ class SeekerBot:
                     # self.set_waypoint(self.hider_coordinates[0], self.hider_coordinates[1], self.yaw)
                     # self.start_moving_to_waypoint()
                 elif M["m00"] == 0 and self.state == 'pursuit':
-                    if self.spot_distance < 0.6:
+                    if self.spot_distance < 1.0:
                         rospy.loginfo_throttle(1, 'Where did you go!?')
                         self.state = 'searching'
                         self.traversing = False
