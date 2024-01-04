@@ -86,9 +86,9 @@ def calc_contr_linear_velocity(distance, angle_diff):
     elif abs(angle_diff) > math.pi/4: # ∠ > 45 degrees
         linear_velocity = 0.1
     elif abs(angle_diff) > math.pi/8: # ∠ > 22.5 degrees
-        linear_velocity = distance + 0.1 if (distance < 2.5) else min(distance, 0.45) 
+        linear_velocity = min(distance, 0.55) if (distance < 2.5) else min(distance, 0.45) 
     else:
-        linear_velocity = distance + 0.25 if (distance < 2.5) else min(distance, 1.25)  # Tune the velocity
+        linear_velocity = min(distance, 0.75) if (distance < 2.5) else min(distance, 1.25)  # Tune the velocity
     return linear_velocity
     """linear_velocity = 0.05
     elif abs(angle_diff) > math.pi/8: # ∠ > 22.5 degrees
@@ -267,7 +267,7 @@ class SeekerBot:
         cell_direction, cell_angle = self.is_frontal(random_coord)
 
         # Check if the free cells are in the frontal area of the seeker bot.
-        while cell_direction == False:
+        while cell_direction == False and self.state == 'searching':
             rospy.loginfo_throttle(1, '>Cell is not frontal! x=' + str(round(random_coord[0],2)) + ', y=' + str(round(random_coord[1],2)))
             random_cell = self.select_random_index(free_cells_indices)
             random_coord = self.convert_cell_to_coordinates(random_cell)
@@ -275,12 +275,12 @@ class SeekerBot:
 
         # Check if the waypoint is within the map limits.
         # Generate a new waypoint if the waypoint is out of the map limits.
-        while abs(random_coord[0]) > self.max_coord or abs(random_coord[1]) > self.max_coord:
+        while abs(random_coord[0]) > self.max_coord or abs(random_coord[1]) > self.max_coord and self.state == 'searching':
             rospy.loginfo_throttle(1, '>Cell is out of bounds! x=' + str(round(random_coord[0],2)) + ', y=' + str(round(random_coord[1],2)))
             random_cell = self.select_random_index(free_cells_indices)
             random_coord = self.convert_cell_to_coordinates(random_cell)
             cell_direction, cell_angle = self.is_frontal(random_coord)
-            while cell_direction == False:
+            while cell_direction == False and self.state == 'searching':
                 random_cell = self.select_random_index(free_cells_indices)
                 random_coord = self.convert_cell_to_coordinates(random_cell)
                 cell_direction, cell_angle = self.is_frontal(random_coord)
