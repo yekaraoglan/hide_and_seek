@@ -80,15 +80,15 @@ def radian_to_degree(angle):
 def calc_contr_linear_velocity(distance, angle_diff):
     # When the angle difference is too big, slow the robot
     if abs(angle_diff) > math.pi:     # ∠ > 180 degrees  
-        linear_velocity = 0.001  # Smoothly
+        linear_velocity = 0.0005  # Smoothly
     elif abs(angle_diff) > math.pi/2: # ∠ > 90 degrees
-        linear_velocity = 0.01
+        linear_velocity = 0.005
     elif abs(angle_diff) > math.pi/4: # ∠ > 45 degrees
-        linear_velocity = 0.2
+        linear_velocity = 0.1
     elif abs(angle_diff) > math.pi/8: # ∠ > 22.5 degrees
-        linear_velocity = distance + 0.2 if (distance < 0.5) else min(distance, 0.75) 
+        linear_velocity = distance + 0.1 if (distance < 2.5) else min(distance, 0.45) 
     else:
-        linear_velocity = distance + 0.5 if (distance < 0.5) else min(distance * 1.25, 1.5)  # Tune the velocity
+        linear_velocity = distance + 0.25 if (distance < 2.5) else min(distance, 1.25)  # Tune the velocity
     return linear_velocity
 
 # Seeker bot class:
@@ -147,6 +147,8 @@ class SeekerBot:
 
         # Initialize the traversing flag:
         self.traversing = False
+        self.traversing_start_time = 0.0
+        self.max_search_period = 60.0
 
         # Initialize the safety protocol:
         # self.protocol = 'none' # none, pursuit, evasion
@@ -157,7 +159,6 @@ class SeekerBot:
     ### Methods:
         
     def calculate_hider_coordinates(self):
-        # FIXME: Problem with distance measurement
         # Calculate the hider bot coordinates using the distance and the angle and the seeker bot coordinates.
         angle = -self.hider_relative_angle + self.yaw
         hider_x = self.x + self.hider_distance * math.cos(angle)
@@ -173,7 +174,6 @@ class SeekerBot:
         return random_cell
     
     def is_frontal(self, coordinates):
-        # FIXME: Problem with angle difference calculation
         # Check if the cell is in the frontal area of the seeker bot.
         x_r, y_r = coordinates
         robot_angle = self.yaw
@@ -263,22 +263,25 @@ class SeekerBot:
 
         # Check if the free cells are in the frontal area of the seeker bot.
         while cell_direction == False:
-            rospy.loginfo_throttle(1, 'Cell is not frontal! x=' + str(round(random_coord[0],2)) + ', y=' + str(round(random_coord[1],2)))
+            rospy.loginfo_throttle(1, '>Cell is not frontal! x=' + str(round(random_coord[0],2)) + ', y=' + str(round(random_coord[1],2)))
             random_cell = self.select_random_index(free_cells_indices)
             random_coord = self.convert_cell_to_coordinates(random_cell)
             cell_direction, cell_angle = self.is_frontal(random_coord)
 
-        # Convert the random cell to a pose.
-        waypoint_pose = self.convert_coordinates_to_pose(random_coord, cell_angle)
-
-        """# Check if the waypoint is within the map limits.
+        # Check if the waypoint is within the map limits.
         # Generate a new waypoint if the waypoint is out of the map limits.
-        while abs(waypoint_pose.pose.position.x) > self.max_coord or abs(waypoint_pose.pose.position.y) > self.max_coord:
+        while abs(random_coord[0]) > self.max_coord or abs(random_coord[1]) > self.max_coord:
+            rospy.loginfo_throttle(1, '>Cell is out of bounds! x=' + str(round(random_coord[0],2)) + ', y=' + str(round(random_coord[1],2)))
             random_cell = self.select_random_index(free_cells_indices)
+            random_coord = self.convert_cell_to_coordinates(random_cell)
+            cell_direction, cell_angle = self.is_frontal(random_coord)
             while cell_direction == False:
                 random_cell = self.select_random_index(free_cells_indices)
-                cell_direction, cell_angle = self.is_frontal(random_cell)
-            waypoint_pose = self.convert_cell_to_pose(random_cell, cell_angle)"""
+                random_coord = self.convert_cell_to_coordinates(random_cell)
+                cell_direction, cell_angle = self.is_frontal(random_coord)
+
+        # Convert the random cell to a pose.
+        waypoint_pose = self.convert_coordinates_to_pose(random_coord, cell_angle)
 
         return waypoint_pose
 
@@ -317,7 +320,7 @@ class SeekerBot:
         rospy.loginfo_throttle(1,'#~# Debugging move_directly_to_hider: angle= ' + str(round(self.hider_relative_angle, 3)) + ' rad')
 
         # Linear velocity:
-        linear_velocity = 0.75 # min(self.hider_distance, 2.5) # 4.5 m/s
+        linear_velocity = min(self.hider_distance, 0.75) # 4.5 m/s
         # Angular velocity:
         angular_velocity = self.hider_relative_angle * 0.5 # theta * 0.5 rad/s
 
@@ -401,11 +404,20 @@ class SeekerBot:
                 # Send the goal to the robot's navigation system.
                 move_state = self.start_moving_to_waypoint()
                 self.handle_move_base_state(move_state)
+                self.traversing_start_time = rospy.get_time()
             else:
-                rospy.loginfo_throttle(10, 'Traversing...')
+                # TODO: Implement the case when the seeker bot is stuck.
+                elapsed_time = rospy.get_time() - self.traversing_start_time
+                rospy.loginfo_throttle(10, 'Traversing for '+ str(round(elapsed_time)) + ' seconds...')
                 rospy.loginfo_throttle(10, 'Target: ' + str(round(self.waypoint.target_pose.pose.position.x,2)) + ', ' + str(round(self.waypoint.target_pose.pose.position.y,2)))
                 move_state = self.move_base.get_state()
                 self.handle_move_base_state(move_state) 
+                if elapsed_time > self.max_search_period:
+                    rospy.loginfo('I am tired of searching!')
+                    self.traversing = False
+                    # Cancel the current goal.
+                    self.move_base.cancel_all_goals()
+                    self.pub.publish(Twist(linear=Point(x=0), angular=Point(z=0)))
         # Chasing state:
         elif self.state == 'chasing':
             self.traversing = False
@@ -428,6 +440,7 @@ class SeekerBot:
         elif self.state == 'pursuit':
             self.traversing = False
             rospy.loginfo_throttle(5, 'I will pursue you till the end!')
+            rospy.loginfo_throttle(1, 'Hider last seen: x=' + str(round(self.hider_coordinates[0],2)) + ', y=' + str(round(self.hider_coordinates[1],3)))
             # Move towards the last known position of the hider bot.
             # Calculate the linear and angular velocities to move directly to the hider bot.
             linear_velociy_x, angular_velocity_z = self.move_to_hider_last_point()
@@ -627,7 +640,10 @@ class SeekerBot:
                     # Calculate the distance to the red object.
                     self.calculate_hider_distance()
                     # Calculate hider bot coordinates using the distance and the angle and the seeker bot coordinates.
-                    self.hider_coordinates = self.calculate_hider_coordinates()
+                    if self.state == 'chasing' and self.hider_distance > 9.9:
+                        pass
+                    else:
+                        self.hider_coordinates = self.calculate_hider_coordinates()
 
                     # Cancel the current goal.
                     if self.state != 'chasing' :
