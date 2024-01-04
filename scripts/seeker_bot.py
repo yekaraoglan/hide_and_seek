@@ -351,7 +351,7 @@ class SeekerBot:
         linear_velocity = calc_contr_linear_velocity(self.spot_distance, angle_diff) # min(distance + 0.1, 0.5) # 0.5 m/s
 
         # Angular velocity:
-        angular_velocity = -angle_diff * 0.5 # theta * 0.5 rad/s
+        angular_velocity = angle_diff * 0.5 # theta * 0.5 rad/s
 
         # Safety force:
         """neg_lin_vel, neg_ang_vel = self.safety_force(linear_velocity)
@@ -692,7 +692,7 @@ class SeekerBot:
                     # self.set_waypoint(self.hider_coordinates[0], self.hider_coordinates[1], self.yaw)
                     # self.start_moving_to_waypoint()
                 elif M["m00"] == 0 and self.state == 'pursuit':
-                    if self.spot_distance < 1.0:
+                    if self.spot_distance < 0.6:
                         rospy.loginfo_throttle(1, 'Where did you go!?')
                         self.state = 'searching'
                         self.traversing = False
