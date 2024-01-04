@@ -30,7 +30,10 @@
         [X]     3.2. Case when loosing sight while chasing.
         [X]     3.3. Implement the pursuit state where the seeker bot goes to the last known position of the hider bot.
         [X] 4. Test the state machine.
-        [ ] 5. Add safety protocol.
+        [X] 5. Add safety protocol.
+        [X]     5.1. Add negative safety force from obstacles.
+        [-]     5.2. or Implement a safety protocol.
+        [-]     5.3. or Bug algorithm for reaching the goal.
 """
 
 import rospy
@@ -86,9 +89,9 @@ def calc_contr_linear_velocity(distance, angle_diff):
     elif abs(angle_diff) > math.pi/4: # ∠ > 45 degrees
         linear_velocity = 0.1
     elif abs(angle_diff) > math.pi/8: # ∠ > 22.5 degrees
-        linear_velocity = min(distance, 0.55) if (distance < 2.5) else min(distance, 0.45) 
+        linear_velocity = min(distance + 0.2, 0.55) if (distance < 2.5) else min(distance, 0.45) 
     else:
-        linear_velocity = min(distance, 0.75) if (distance < 2.5) else min(distance, 1.25)  # Tune the velocity
+        linear_velocity = min(distance + 0.2, 0.85) if (distance < 2.5) else min(distance, 1.25)  # Tune the velocity
     return linear_velocity
     """linear_velocity = 0.05
     elif abs(angle_diff) > math.pi/8: # ∠ > 22.5 degrees
@@ -154,7 +157,7 @@ class SeekerBot:
 
         # Initialize the traversing flag:
         self.traversing = False
-        self.traversing_start_time = 0.0
+        self.traversal_start_time = 0.0
         self.max_search_period = 120.0
 
         # Initialize the safety protocol:
@@ -327,13 +330,13 @@ class SeekerBot:
         # Linear velocity:
         linear_velocity = calc_contr_linear_velocity(self.spot_distance, self.hider_relative_angle)# min(self.hider_distance, 0.75) # 4.5 m/s
         # Angular velocity:
-        angular_velocity = -self.hider_relative_angle # theta * 0.5 rad/s
+        angular_velocity = (-self.hider_relative_angle) # theta * 0.5 rad/s
 
         # Safety force:
-        """neg_lin_vel, neg_ang_vel = self.safety_force(linear_velocity)
+        neg_lin_vel, neg_ang_vel = self.safety_force(linear_velocity)
 
         linear_velocity = min(linear_velocity + neg_lin_vel, 2.0)
-        angular_velocity += neg_ang_vel"""
+        angular_velocity += neg_ang_vel
 
         return linear_velocity, angular_velocity
     
@@ -354,10 +357,10 @@ class SeekerBot:
         angular_velocity = angle_diff * 0.5 # theta * 0.5 rad/s
 
         # Safety force:
-        """neg_lin_vel, neg_ang_vel = self.safety_force(linear_velocity)
+        neg_lin_vel, neg_ang_vel = self.safety_force(linear_velocity)
 
         linear_velocity = min(linear_velocity + neg_lin_vel, 2.0)
-        angular_velocity += neg_ang_vel"""
+        angular_velocity += neg_ang_vel
 
         return linear_velocity, angular_velocity
 
@@ -421,10 +424,10 @@ class SeekerBot:
                 # Send the goal to the robot's navigation system.
                 move_state = self.start_moving_to_waypoint()
                 self.handle_move_base_state(move_state)
-                self.traversing_start_time = rospy.get_time()
+                self.traversal_start_time = rospy.get_time()
             else:
                 # TODO: Implement the case when the seeker bot is stuck.
-                elapsed_time = rospy.get_time() - self.traversing_start_time
+                elapsed_time = rospy.get_time() - self.traversal_start_time
                 rospy.loginfo_throttle(10, 'Traversing for '+ str(round(elapsed_time)) + ' seconds...')
                 rospy.loginfo_throttle(10, 'Target: ' + str(round(self.waypoint.target_pose.pose.position.x,2)) + ', ' + str(round(self.waypoint.target_pose.pose.position.y,2)))
                 move_state = self.move_base.get_state()
@@ -521,7 +524,7 @@ class SeekerBot:
         # Use scan array data and the hider relative angle to calculate the distance to the hider bot.
         d = int(radian_to_degree(self.hider_relative_angle))
         # neighboring indices to d
-        neighbors = [d-1, d, d+1]
+        neighbors = [d]# [d-1, d, d+1]
         selected_scan_data = [self.scan[i] for i in neighbors]
         self.hider_distance = min(selected_scan_data + [self.max_scan_range])   # 10.0 is the max range of the laser scan
         rospy.loginfo_throttle(1, '#!# Hider distance: ' + str(round(self.hider_distance,3)))
@@ -549,8 +552,19 @@ class SeekerBot:
         if abs(angle) > math.pi/2:
             reverse_linear_velocity = 0.0
             reverse_angular_velocity = 0.0
-        else:
-            reverse_linear_velocity, reverse_angular_velocity = - calc_contr_linear_velocity(critical_distance, angle) * math.cos(angle) * 0.1, - angle * 0.1 # theta * 0.5 rad/s
+        else: # TODO: Check this part
+            if angle < 0: # left
+                turn = -math.pi/2
+            else: # right
+                turn = math.pi/2
+
+            # factor = min(0.5/critical_distance, 0.25)
+            if critical_distance > 1.0:
+                factor = 0.05
+            else:
+                factor = 0.6
+
+            reverse_linear_velocity, reverse_angular_velocity = - calc_contr_linear_velocity(critical_distance, angle) * math.cos(angle) * min(factor-0.45, 0.01), - min(1/(1e-12+angle), turn) * factor # theta * 0.5 rad/s
         
         # Return angle to turn for safety and negative speed to slow down according to the distance and angle of obstacle.
         return reverse_linear_velocity, reverse_angular_velocity
@@ -689,10 +703,12 @@ class SeekerBot:
                     rospy.loginfo_throttle(1, 'I lost you, Jerry!')
                     self.state = 'pursuit'
                     self.traversing = False
+                    self.traversal_start_time = rospy.get_time()
                     # self.set_waypoint(self.hider_coordinates[0], self.hider_coordinates[1], self.yaw)
                     # self.start_moving_to_waypoint()
                 elif M["m00"] == 0 and self.state == 'pursuit':
-                    if self.spot_distance < 0.6:
+                    elapsed_time = rospy.get_time() - self.traversal_start_time
+                    if self.spot_distance < 0.6 or elapsed_time > self.max_search_period:
                         rospy.loginfo_throttle(1, 'Where did you go!?')
                         self.state = 'searching'
                         self.traversing = False
