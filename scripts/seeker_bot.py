@@ -269,24 +269,28 @@ class SeekerBot:
         random_coord = self.convert_cell_to_coordinates(random_cell)
         cell_direction, cell_angle = self.is_frontal(random_coord)
 
+        i = 0
+
         # Check if the free cells are in the frontal area of the seeker bot.
-        while cell_direction == False and self.state == 'searching':
+        while cell_direction == False and self.state == 'searching' and i < 100:
             rospy.loginfo_throttle(1, '>Cell is not frontal! x=' + str(round(random_coord[0],2)) + ', y=' + str(round(random_coord[1],2)))
             random_cell = self.select_random_index(free_cells_indices)
             random_coord = self.convert_cell_to_coordinates(random_cell)
             cell_direction, cell_angle = self.is_frontal(random_coord)
+            i+=1
 
         # Check if the waypoint is within the map limits.
         # Generate a new waypoint if the waypoint is out of the map limits.
-        while abs(random_coord[0]) > self.max_coord or abs(random_coord[1]) > self.max_coord and self.state == 'searching':
+        while abs(random_coord[0]) > self.max_coord or abs(random_coord[1]) > self.max_coord and self.state == 'searching' and i < 100:
             rospy.loginfo_throttle(1, '>Cell is out of bounds! x=' + str(round(random_coord[0],2)) + ', y=' + str(round(random_coord[1],2)))
             random_cell = self.select_random_index(free_cells_indices)
             random_coord = self.convert_cell_to_coordinates(random_cell)
             cell_direction, cell_angle = self.is_frontal(random_coord)
-            while cell_direction == False and self.state == 'searching':
+            while cell_direction == False and self.state == 'searching' and i < 100:
                 random_cell = self.select_random_index(free_cells_indices)
                 random_coord = self.convert_cell_to_coordinates(random_cell)
                 cell_direction, cell_angle = self.is_frontal(random_coord)
+                i+=1
 
         # Convert the random cell to a pose.
         waypoint_pose = self.convert_coordinates_to_pose(random_coord, cell_angle)
