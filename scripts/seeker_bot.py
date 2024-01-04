@@ -137,6 +137,10 @@ class SeekerBot:
         self.map_origin = None
         self.show_map = True
 
+        # Traversal Limits:
+        self.max_coord = 10.0
+        self.max_scan_range = 10.0 # thğis is the max safe range of the laser scan
+
         # Initialize the move_base client:
         self.move_base = actionlib.SimpleActionClient('/seeker/move_base', MoveBaseAction)
         self.move_base.wait_for_server()
@@ -161,22 +165,28 @@ class SeekerBot:
         rospy.loginfo_throttle(1, '#!# Hider coordinates: x=' + str(round(hider_x,3)) + ', y=' + str(round(hider_y,3)) + ', yaw=' + str(round(radian_to_degree(angle),2)) + ' degrees')
         return hider_x, hider_y   
 
-    def calculate_random_index(self, free_indices):
-        # Randomly select a free cell.
-        random_index = np.random.choice(free_indices[0].shape[0]) # Choose a random index from the free cells indices.
-        random_cell = free_indices[0][random_index], free_indices[1][random_index] # Get the random cell indices.
+    def select_random_index(self, indices):
+        # Randomly select a cell.
+        random_index = np.random.choice(indices[0].shape[0]) # Choose a random index from the free cells indices.
+        random_cell = indices[0][random_index], indices[1][random_index] # Get the random cell indices.
 
         return random_cell
     
-    def is_frontal(self, cell):
+    def is_frontal(self, coordinates):
+        # FIXME: Problem with angle difference calculation
         # Check if the cell is in the frontal area of the seeker bot.
+        x_r, y_r = coordinates
         robot_angle = self.yaw
-        cell_angle = math.atan2(cell[1] - self.y, cell[0] - self.x)
-        angle_difference = np.abs((cell_angle - robot_angle + np.pi) % (2*np.pi) - np.pi)
-        if angle_difference < np.pi/2:
-            return True, cell_angle
+        angle = angle_between_points(self.x, self.y, x_r, y_r) # FIXME
+        angle_diff = angle_difference(angle, robot_angle)
+        """
+        rospy.loginfo_throttle(1, '#>x<# Cell Angle: ' + str(round(radian_to_degree(angle),2)) + ' degrees')
+        rospy.loginfo_throttle(1, '#^n^# Angle difference: ' + str(round(radian_to_degree(angle_diff),2)) + ' degrees')
+        """
+        if abs(angle_diff) > math.pi/2: # ∠ > 90 degrees
+            return False, angle    # The cell is not in the frontal area of the seeker bot.
         else:
-            return False, cell_angle
+            return True, angle     # The cell is in the frontal area of the seeker bot.
     
     def is_free(self, cell):
         # Check if the cell is free.
@@ -190,11 +200,20 @@ class SeekerBot:
         # coordinates: (x, y)
         # cell: (x, y)
         # Convert the coordinates to a cell in the map frame.
-        cell = ((coordinates[0] - self.map_origin.position.x) / self.map_resolution, (coordinates[1] - self.map_origin.position.y) / self.map_resolution)
+        cell = ((coordinates[0] - self.map_origin.position.x) // self.map_resolution, (coordinates[1] - self.map_origin.position.y) // self.map_resolution)
 
         return cell
+    
+    def convert_cell_to_coordinates(self, cell):
+        # Convert the map cell to coordinates.
+        # cell: (x, y)
+        # coordinates: (x, y)
+        # Convert the cell coordinates to coordinates in the world frame.
+        coordinates = (cell[0] * self.map_resolution + self.map_origin.position.x, cell[1] * self.map_resolution + self.map_origin.position.y)
 
-    def convert_cell_to_pose(self, cell, angle=0.0):
+        return coordinates
+
+    def convert_cell_to_pose(self, cell, yaw=0.0):
         # Convert the map cell to a pose.
         # cell: (x, y)
         # pose: (x, y, yaw)
@@ -203,9 +222,34 @@ class SeekerBot:
         pose.header.frame_id = "map"
         pose.pose.position.x = cell[0] * self.map_resolution + self.map_origin.position.x
         pose.pose.position.y = cell[1] * self.map_resolution + self.map_origin.position.y
-        pose.pose.orientation.w = angle  # Assuming the robot can move in any direction.
+        self.waypoint.target_pose.pose.position.z = 0.0
+        q = quaternion_from_euler(0.0, 0.0, float(yaw))
+        self.waypoint.target_pose.pose.orientation.x = q[0]
+        self.waypoint.target_pose.pose.orientation.y = q[1]
+        self.waypoint.target_pose.pose.orientation.z = q[2]
+        self.waypoint.target_pose.pose.orientation.w = q[3]
 
         return pose
+    
+    def convert_coordinates_to_pose(self, coordinates, yaw=0.0):
+        # Convert the coordinates to a pose.
+        # coordinates: (x, y)
+        # pose: (x, y, yaw)
+        # Convert the coordinates to a pose in the world frame.
+        pose = PoseStamped()
+        pose.header.frame_id = "map"
+        pose.pose.position.x = coordinates[0]
+        pose.pose.position.y = coordinates[1]
+        self.waypoint.target_pose.pose.position.z = 0.0
+        q = quaternion_from_euler(0.0, 0.0, float(yaw))
+        self.waypoint.target_pose.pose.orientation.x = q[0]
+        self.waypoint.target_pose.pose.orientation.y = q[1]
+        self.waypoint.target_pose.pose.orientation.z = q[2]
+        self.waypoint.target_pose.pose.orientation.w = q[3]
+
+        return pose
+    
+
 
     def random_waypoint(self):
         # Calculate the waypoint coordinates using the map data.
@@ -213,18 +257,30 @@ class SeekerBot:
         free_cells_indices = np.where(self.map_data == 0)
 
         # Randomly select a free cell in the map. (x, y)
-        random_cell = self.calculate_random_index(free_cells_indices)
-        cell_direction, cell_angle = self.is_frontal(random_cell)
+        random_cell = self.select_random_index(free_cells_indices)
+        random_coord = self.convert_cell_to_coordinates(random_cell)
+        cell_direction, cell_angle = self.is_frontal(random_coord)
 
         # Check if the free cells are in the frontal area of the seeker bot.
         while cell_direction == False:
-            random_cell = self.calculate_random_index(free_cells_indices)
-            cell_direction, cell_angle = self.is_frontal(random_cell)
+            rospy.loginfo_throttle(1, 'Cell is not frontal! x=' + str(round(random_coord[0],2)) + ', y=' + str(round(random_coord[1],2)))
+            random_cell = self.select_random_index(free_cells_indices)
+            random_coord = self.convert_cell_to_coordinates(random_cell)
+            cell_direction, cell_angle = self.is_frontal(random_coord)
 
         # Convert the random cell to a pose.
-        waypoint_pose = self.convert_cell_to_pose(random_cell, cell_angle)
-        self.set_waypoint(waypoint_pose.pose.position.x, waypoint_pose.pose.position.y, waypoint_pose.pose.orientation.w)
-        rospy.loginfo('Waypoint: ' + str(round(waypoint_pose.pose.position.x,2)) + ', ' + str(round(waypoint_pose.pose.position.y,2)))
+        waypoint_pose = self.convert_coordinates_to_pose(random_coord, cell_angle)
+
+        """# Check if the waypoint is within the map limits.
+        # Generate a new waypoint if the waypoint is out of the map limits.
+        while abs(waypoint_pose.pose.position.x) > self.max_coord or abs(waypoint_pose.pose.position.y) > self.max_coord:
+            random_cell = self.select_random_index(free_cells_indices)
+            while cell_direction == False:
+                random_cell = self.select_random_index(free_cells_indices)
+                cell_direction, cell_angle = self.is_frontal(random_cell)
+            waypoint_pose = self.convert_cell_to_pose(random_cell, cell_angle)"""
+
+        return waypoint_pose
 
     def set_waypoint(self, x, y, yaw):
         self.waypoint = MoveBaseGoal()
@@ -259,15 +315,6 @@ class SeekerBot:
         
     def move_towards_hider(self):
         rospy.loginfo_throttle(1,'#~# Debugging move_directly_to_hider: angle= ' + str(round(self.hider_relative_angle, 3)) + ' rad')
-
-        """# Return linear and angular velocities to move directly to the hider bot.
-        rospy.loginfo('#!# Debugging move_directly_to_hider: distance:' + str(self.hider_distance) + ', angle:' + str(self.hider_relative_angle))
-        rospy.loginfo('#!# Debugging move_directly_to_hider: x-' + str(self.hider_coordinates[0]) + ', y-' + str(self.hider_coordinates[1]))
-        # Distance to the hider bot:
-        self.hider_distance = eucledian_distance(self.x, self.y, self.hider_coordinates[0], self.hider_coordinates[1])
-
-        # Calculate the angle between the robot and the hider bot.
-        self.hider_relative_angle = math.atan2(self.hider_coordinates[1] - self.y, self.hider_coordinates[0] - self.x)"""
 
         # Linear velocity:
         linear_velocity = 0.75 # min(self.hider_distance, 2.5) # 4.5 m/s
@@ -311,7 +358,8 @@ class SeekerBot:
         elif state == actionlib.GoalStatus.PREEMPTED:
             # The goal received a cancel request after it started executing
             # and has since completed its execution (Terminal State)
-            rospy.loginfo("||| Goal execution preempted.")
+            rospy.loginfo_throttle(1,"||| Goal execution preempted.")
+            self.traversing = False
         elif state == actionlib.GoalStatus.RECALLED:
             # The goal received a cancel request before it started executing,
             # but the action server has not yet confirmed that the goal is canceled
@@ -346,7 +394,9 @@ class SeekerBot:
             if self.traversing == False and self.move_base.get_state() not in [actionlib.GoalStatus.ACTIVE]:# , actionlib.GoalStatus.PENDING]:
                 # Randomly select a free cell in the map.
                 rospy.loginfo('I am going... this way!')
-                self.random_waypoint()
+                waypoint_pose = self.random_waypoint()
+                rospy.loginfo('Waypoint: ' + str(round(waypoint_pose.pose.position.x,2)) + ', ' + str(round(waypoint_pose.pose.position.y,2)))
+                self.set_waypoint(waypoint_pose.pose.position.x, waypoint_pose.pose.position.y, waypoint_pose.pose.orientation.w)
 
                 # Send the goal to the robot's navigation system.
                 move_state = self.start_moving_to_waypoint()
@@ -446,7 +496,7 @@ class SeekerBot:
         # neighboring indices to d
         neighbors = [d-2, d-1, d, d+1, d+2]
         selected_scan_data = [self.scan[i] for i in neighbors]
-        self.hider_distance = min(selected_scan_data + [10.0])   # 10.0 is the max range of the laser scan
+        self.hider_distance = min(selected_scan_data + [self.max_scan_range])   # 10.0 is the max range of the laser scan
         rospy.loginfo_throttle(1, '#!# Hider distance: ' + str(round(self.hider_distance,3)))
         rospy.loginfo_throttle(1, '#?# Periphery angle degrees: \n' + str(neighbors))
         rospy.loginfo_throttle(1, '#?# Periphery distances: \n' + str([round(self.scan[i],2) for i in neighbors]))
@@ -480,8 +530,6 @@ class SeekerBot:
 
     # Occupancy grid callback:
     def costmap_callback(self, msg):
-        # rospy.loginfo_throttle(5, '### Debugging Costmap_callback callback: ' + str(type(msg)))
-
         # Get the map data.
         self.map_data = msg.data
         # Get the map width.
@@ -492,6 +540,8 @@ class SeekerBot:
         self.map_resolution = msg.info.resolution
         # Get the map origin.
         self.map_origin = msg.info.origin
+
+        # rospy.loginfo_throttle(5, '### Debugging Costmap_callback callback: map width=' + str(self.map_width) + ', map height=' + str(self.map_height) + ', map resolution=' + str(self.map_resolution) + ', map origin=' + str(self.map_origin))
 
         # Convert the map data to a numpy array.
         self.map_data = np.array(self.map_data)
@@ -534,7 +584,7 @@ class SeekerBot:
         orientation = msg.pose.pose.orientation
         _, _, self.yaw = euler_from_quaternion([orientation.x, orientation.y, orientation.z, orientation.w])
 
-        rospy.loginfo_throttle(10, '## Debugging odom_callback callback: ' + str(round(self.x,3)) + ', ' + str(round(self.y,3)) + ', ' + str(round(self.yaw,3)))
+        rospy.loginfo_throttle(10, '## Debugging odom_callback callback: x=' + str(round(self.x,3)) + ', y=' + str(round(self.y,3)) + ', yaw=' + str(round(self.yaw,3)))
 
         # NOTE: Where to put this code?
         self.state_machine()
