@@ -9,27 +9,27 @@
         3. Chasing mode: It chases the hider bot once it is found.
 
     TODO:
-        [~] 1. Waiting mode.
+        [X] 1. Waiting mode.
         [X]     1.1. Implement the timer or have a subscriber to the hider bot.
         [X]     1.2. Implement the state machine.
-        [ ]     1.3. Wait according to referee callback
-        [~] 2. Searching mode.
+        [~]     1.3. Wait according to referee callback
+        [X] 2. Searching mode.
         [X]     2.1. Traversing algorithm.
         [X]         2.1.1. Subscribe to move_base topic
         [X]         2.1.2. Use occupancy grid to traverse the map.
         [X]         2.1.3. Generate waypoints to traverse the map.
-        [~]     2.2. Detecting hider bot.
+        [X]     2.2. Detecting hider bot.
         [X]         2.2.1. Subscribe to the camera topic.
         [X]         2.2.2. Implement detection method.
         [X]         2.2.3. Compute hider bot angle.
-        [~]         2.2.4. Compute hider bot distance.
-        [ ]         2.2.5. Compute hider bot coordinates.
-        [~]     2.3. Implement the searching state machine.
-        [~] 3. Chasing mode.
+        [X]         2.2.4. Compute hider bot distance.
+        [X]         2.2.5. Compute hider bot coordinates.
+        [X]     2.3. Implement the searching state machine.
+        [X] 3. Chasing mode.
         [X]     3.1. Implement the chasing state machine.
-        [ ]     3.2. Case when loosing sight while chasing.
-        [ ]     3.3. Implement the pursuit state where the seeker bot goes to the last known position of the hider bot.
-        [~] 4. Test the state machine.
+        [X]     3.2. Case when loosing sight while chasing.
+        [X]     3.3. Implement the pursuit state where the seeker bot goes to the last known position of the hider bot.
+        [X] 4. Test the state machine.
         [ ] 5. Add safety protocol.
 """
 
@@ -44,7 +44,7 @@ from cv_bridge import CvBridge, CvBridgeError
 import actionlib
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 
-from tf.transformations import quaternion_from_euler
+from tf.transformations import quaternion_from_euler, euler_from_quaternion
 
 import numpy as np
 import cv2
@@ -57,6 +57,18 @@ def eucledian_distance(x1, y1, x2, y2):
     # Calculate the distance between two points.
     return np.sqrt((x1 - x2)**2 + (y1 - y2)**2)
 
+def angle_between_points(x1, y1, x2, y2):
+    return math.atan2(y2-y1,x2-x1)
+
+def angle_difference(angle1, angle2):
+    angle_diff = angle1 - angle2
+    # Handle the case when the angle difference is bigger than 180 degrees
+    if (angle_diff > math.pi):
+        angle_diff -= 2 * math.pi
+    elif (angle_diff < -math.pi):
+        angle_diff += 2 * math.pi
+    return angle_diff
+
 def degree_to_radian(angle):
     # Convert angle from degrees to radians.
     return angle * np.pi / 180.0
@@ -64,6 +76,20 @@ def degree_to_radian(angle):
 def radian_to_degree(angle):
     # Convert angle from radians to degrees.
     return angle * 180.0 / np.pi
+
+def calc_contr_linear_velocity(distance, angle_diff):
+    # When the angle difference is too big, slow the robot
+    if abs(angle_diff) > math.pi:     # ∠ > 180 degrees  
+        linear_velocity = 0.001  # Smoothly
+    elif abs(angle_diff) > math.pi/2: # ∠ > 90 degrees
+        linear_velocity = 0.01
+    elif abs(angle_diff) > math.pi/4: # ∠ > 45 degrees
+        linear_velocity = 0.2
+    elif abs(angle_diff) > math.pi/8: # ∠ > 22.5 degrees
+        linear_velocity = distance + 0.2 if (distance < 0.5) else min(distance, 0.75) 
+    else:
+        linear_velocity = distance + 0.5 if (distance < 0.5) else min(distance * 1.25, 1.5)  # Tune the velocity
+    return linear_velocity
 
 # Seeker bot class:
 class SeekerBot:
@@ -95,9 +121,10 @@ class SeekerBot:
         self.bridge = CvBridge()
 
         # Hider bot:
-        self.hider_relative_angle = 0.0
-        self.hider_distance = 0.0
-        self.hider_coordinates = (0.0, 0.0)
+        self.hider_relative_angle = 0.0 # Angle between the robot and the hider bot.
+        self.hider_distance = 0.0   # Distance to the hider bot.
+        self.hider_coordinates = (0.0, 0.0) # (x, y)
+        self.spot_distance = 0.0    # Distance to the last known position of the hider bot.
 
         # Traversing random waypoint:
         self.waypoint = MoveBaseGoal() # (x, y), yaw
@@ -118,7 +145,7 @@ class SeekerBot:
         self.traversing = False
 
         # Initialize the safety protocol:
-        self.protocol = 'none' # none, pursuit, evasion
+        # self.protocol = 'none' # none, pursuit, evasion
 
         # Initialize the parameters:
         # ...
@@ -126,10 +153,12 @@ class SeekerBot:
     ### Methods:
         
     def calculate_hider_coordinates(self):
+        # FIXME: Problem with distance measurement
         # Calculate the hider bot coordinates using the distance and the angle and the seeker bot coordinates.
-        hider_x = self.x + self.hider_distance * math.cos(self.hider_relative_angle + self.yaw)
-        hider_y = self.y + self.hider_distance * math.sin(self.hider_relative_angle + self.yaw)
-        rospy.loginfo_throttle(5, '#!# Hider coordinates: ' + str(hider_x) + ', ' + str(hider_y))
+        angle = -self.hider_relative_angle + self.yaw
+        hider_x = self.x + self.hider_distance * math.cos(angle)
+        hider_y = self.y + self.hider_distance * math.sin(angle)
+        rospy.loginfo_throttle(1, '#!# Hider coordinates: x=' + str(round(hider_x,3)) + ', y=' + str(round(hider_y,3)) + ', yaw=' + str(round(radian_to_degree(angle),2)) + ' degrees')
         return hider_x, hider_y   
 
     def calculate_random_index(self, free_indices):
@@ -212,14 +241,15 @@ class SeekerBot:
 
     def start_moving_to_waypoint(self):
         # Send the goal to the robot's navigation system.
+        # FIXME: Should not enter here more than once
         rospy.loginfo("# Debugging move_base send_goal called")
         rospy.loginfo("Here I come, Jerry!")
-        if self.move_base.get_state() is not actionlib.GoalStatus.ACTIVE:
+        if self.move_base.get_state() is not actionlib.GoalStatus.ACTIVE and self.traversing is False:
             # It's safe to send a new goal
             self.move_base.send_goal(self.waypoint)
+            self.traversing = True
         else:
             rospy.logwarn("Tried to send a new goal while move_base was still processing the current goal")
-        self.traversing = True
         """wait = self.move_base.wait_for_result()
         if not wait:
             rospy.logerr("Action server not available!")
@@ -228,7 +258,7 @@ class SeekerBot:
         return self.move_base.get_state()
         
     def move_towards_hider(self):
-        rospy.loginfo_throttle(1,'#!# Debugging move_directly_to_hider: angle:' + str(self.hider_relative_angle))
+        rospy.loginfo_throttle(1,'#~# Debugging move_directly_to_hider: angle= ' + str(round(self.hider_relative_angle, 3)) + ' rad')
 
         """# Return linear and angular velocities to move directly to the hider bot.
         rospy.loginfo('#!# Debugging move_directly_to_hider: distance:' + str(self.hider_distance) + ', angle:' + str(self.hider_relative_angle))
@@ -248,16 +278,19 @@ class SeekerBot:
     
     def move_to_hider_last_point(self):
         # Calculate distance to the hider bot.
-        self.hider_distance = eucledian_distance(self.x, self.y, self.hider_coordinates[0], self.hider_coordinates[1])
+        self.spot_distance = eucledian_distance(self.x, self.y, self.hider_coordinates[0], self.hider_coordinates[1])
 
         # Calculate the angle between the robot and the hider bot.
-        # self.hider_relative_angle = 0. # math.atan2(self.hider_coordinates[1] - self.y, self.hider_coordinates[0] - self.x) 
+        angle = angle_between_points(self.x, self.y, self.hider_coordinates[0], self.hider_coordinates[1])
 
-        # Linear velocity:
-        linear_velocity = min(self.hider_distance + 0.1, 0.5) # 0.5 m/s
+        # Calculate the angle difference between the robot and the point.
+        angle_diff = angle_difference(angle, self.yaw)
+
+        # Calculate the linear velocity
+        linear_velocity = calc_contr_linear_velocity(self.spot_distance, angle_diff) # min(distance + 0.1, 0.5) # 0.5 m/s
 
         # Angular velocity:
-        angular_velocity = self.hider_relative_angle * 0.5 # theta * 0.5 rad/s
+        angular_velocity = angle_diff * 0.5 # theta * 0.5 rad/s
 
         return linear_velocity, angular_velocity
 
@@ -267,38 +300,33 @@ class SeekerBot:
         if state == actionlib.GoalStatus.SUCCEEDED:
             # The action succeeded, do something...
             self.traversing = False
-            rospy.loginfo_throttle(5, "Goal execution done!")
+            rospy.loginfo_throttle(1, "||| Goal execution done!")
         elif state == actionlib.GoalStatus.ACTIVE:
             # The action is still in progress, do something else...
             self.traversing = True
-            rospy.loginfo_throttle(10,"Goal execution in progress.")
+            rospy.loginfo_throttle(5,"||| Goal execution in progress.")
         elif state == actionlib.GoalStatus.PENDING:
             # The goal has yet to be processed by the action server
-            self.traversing = False
-            rospy.loginfo("Goal execution pending.")
+            rospy.loginfo("||| Goal execution pending.")
         elif state == actionlib.GoalStatus.PREEMPTED:
             # The goal received a cancel request after it started executing
             # and has since completed its execution (Terminal State)
-            self.traversing = False
-            rospy.loginfo("Goal execution preempted.")
+            rospy.loginfo("||| Goal execution preempted.")
         elif state == actionlib.GoalStatus.RECALLED:
             # The goal received a cancel request before it started executing,
             # but the action server has not yet confirmed that the goal is canceled
-            self.traversing = False
-            rospy.loginfo("Goal execution recalled.")
+            rospy.loginfo_throttle(1,"||| Goal execution recalled.")
         elif state == actionlib.GoalStatus.REJECTED:
-            self.traversing = False
             # The action has failed
             rospy.logerr("Action server not available!")
             rospy.signal_shutdown("Action server not available!")
         elif state == actionlib.GoalStatus.ABORTED:
-            self.traversing = False
             # The action was canceled by the action client
-            rospy.loginfo("Goal execution aborted.")
-        elif state == actionlib.GoalStatus.LOST:
+            rospy.loginfo_throttle(1,"||| Goal execution aborted.")
             self.traversing = False
+        elif state == actionlib.GoalStatus.LOST:
             # Unknown state
-            rospy.loginfo("Goal execution lost.")
+            rospy.loginfo("||| Goal execution lost.")
         else:
             self.traversing = False
             # The action has failed
@@ -308,7 +336,7 @@ class SeekerBot:
     # State machine:
     # For controlling the seeker bot movement and behavior.
     def state_machine(self):
-        rospy.loginfo_throttle(5, '## Debugging state machine: ' + self.state)
+        rospy.loginfo_throttle(1, '[%] State machine: ' + self.state)
         # Waiting state:
         if self.state == 'waiting':
             self.pub.publish(Twist(linear=Point(x=0), angular=Point(z=0)))
@@ -325,14 +353,18 @@ class SeekerBot:
                 self.handle_move_base_state(move_state)
             else:
                 rospy.loginfo_throttle(10, 'Traversing...')
+                rospy.loginfo_throttle(10, 'Target: ' + str(round(self.waypoint.target_pose.pose.position.x,2)) + ', ' + str(round(self.waypoint.target_pose.pose.position.y,2)))
                 move_state = self.move_base.get_state()
                 self.handle_move_base_state(move_state) 
         # Chasing state:
         elif self.state == 'chasing':
             self.traversing = False
             rospy.loginfo_throttle(5, 'I\'m gonna getcha, Jerry!')
+            rospy.loginfo_throttle(1, 'Measures: angle ' + str(round(radian_to_degree(self.hider_relative_angle),2)) + ' degrees, distance ' + str(round(self.hider_distance,3)))
             if self.hider_distance < 1.0:
-                rospy.loginfo_throttle(5, 'I caought you, Jerry. Muahahaha!')
+                rospy.loginfo('I caught you, Jerry. Muahahaha!')
+                rospy.loginfo('Success: angle ' + str(round(radian_to_degree(self.hider_relative_angle),2)) + ' degrees, distance ' + str(round(self.hider_distance,3)))
+                rospy.loginfo('Hider spot: x=' + str(round(self.hider_coordinates[0],2)) + ', y=' + str(round(self.hider_coordinates[1],3)))
                 self.state = 'done'
                 
                 self.traversing = False
@@ -396,7 +428,7 @@ class SeekerBot:
         # Calculate the angle (in degrees)
         theta = normalized_cX * fov
 
-        rospy.loginfo_throttle(5, '#!# Hider angle: ' + str(theta))
+        rospy.loginfo_throttle(1, '#!# Hider rel. angle: ' + str(round(theta,2)) + ' degrees')
         # rospy.loginfo_throttle(5, '#!# Seeker yaw: ' + str(self.yaw)) 
         self.hider_relative_angle = degree_to_radian(theta)
 
@@ -406,9 +438,19 @@ class SeekerBot:
         # rospy.loginfo_throttle(5, 'Hider relative angle: ' + str(self.hider_relative_angle))
     
     def calculate_hider_distance(self):
+        # FIXME: Problem calculating distance
+        # Degree correct
+        # Scan distance incorrect
         # Use scan array data and the hider relative angle to calculate the distance to the hider bot.
-        self.hider_distance = min(self.scan[int(radian_to_degree(self.hider_relative_angle))], 10.0) - 0.5
-        rospy.loginfo_throttle(5, '#!# Hider distance: ' + str(self.hider_distance))
+        d = int(radian_to_degree(self.hider_relative_angle))
+        # neighboring indices to d
+        neighbors = [d-2, d-1, d, d+1, d+2]
+        selected_scan_data = [self.scan[i] for i in neighbors]
+        self.hider_distance = min(selected_scan_data + [10.0])   # 10.0 is the max range of the laser scan
+        rospy.loginfo_throttle(1, '#!# Hider distance: ' + str(round(self.hider_distance,3)))
+        rospy.loginfo_throttle(1, '#?# Periphery angle degrees: \n' + str(neighbors))
+        rospy.loginfo_throttle(1, '#?# Periphery distances: \n' + str([round(self.scan[i],2) for i in neighbors]))
+        
 
     # Check if the seeker bot is in a safe position.
     def safety_check(self):
@@ -438,7 +480,7 @@ class SeekerBot:
 
     # Occupancy grid callback:
     def costmap_callback(self, msg):
-        rospy.loginfo_throttle(5, '### Debugging Costmap_callback callback: ' + str(type(msg)))
+        # rospy.loginfo_throttle(5, '### Debugging Costmap_callback callback: ' + str(type(msg)))
 
         # Get the map data.
         self.map_data = msg.data
@@ -489,16 +531,18 @@ class SeekerBot:
     def odom_callback(self, msg):
         self.x = msg.pose.pose.position.x
         self.y = msg.pose.pose.position.y
-        self.yaw = msg.pose.pose.orientation.z
+        orientation = msg.pose.pose.orientation
+        _, _, self.yaw = euler_from_quaternion([orientation.x, orientation.y, orientation.z, orientation.w])
 
-        rospy.loginfo_throttle(10, '## Debugging odom_callback callback: ' + str(self.x) + ', ' + str(self.y) + ', ' + str(self.yaw))
+        rospy.loginfo_throttle(10, '## Debugging odom_callback callback: ' + str(round(self.x,3)) + ', ' + str(round(self.y,3)) + ', ' + str(round(self.yaw,3)))
 
-        # TODO: Where to put this code?
+        # NOTE: Where to put this code?
         self.state_machine()
 
     # Scan callback:
     def scan_callback(self, msg):
         self.scan = msg.ranges
+        # rospy.loginfo_throttle(5, '??? Frontal distances: \n' + str([round(self.scan[i],2) for i in range(-15, 15)]))
         if self.state == 'searching':
             if self.safety_check():
                 pass
@@ -527,7 +571,7 @@ class SeekerBot:
                 # Change state from 'searching' to 'chasing' if red object detected.
                 if M["m00"] > 0:
                     rospy.loginfo_throttle(5, 'Haha, Jerry I see you!')
-                    rospy.loginfo_throttle(5, '#># Odom coordinates: ' + str(self.x) + ', ' + str(self.y))
+                    rospy.loginfo_throttle(1, '#># Odom : x=' + str(round(self.x, 3)) + ', y=' + str(round(self.y, 3)) + ', yaw=' + str(round(radian_to_degree(self.yaw), 2)) + ' degrees')
                     # Calculate the angle between the robot and the red object.
                     self.calculate_hider_relative_angle(M)
                     # Calculate the distance to the red object.
@@ -537,8 +581,8 @@ class SeekerBot:
 
                     # Cancel the current goal.
                     if self.state != 'chasing' :
-                        rospy.loginfo_once('Canceling the current goal')
-                        self.move_base.cancel_goal()
+                        rospy.loginfo('Canceling the current goal')
+                        # self.move_base.cancel_goal()
                         self.move_base.cancel_all_goals()
 
                         lin_vec, ang_vec = 0., 0. # self.move_directly_to_hider()
@@ -552,17 +596,17 @@ class SeekerBot:
                     # if self.start_moving_to_waypoint():
                     #   rospy.loginfo("Goal execution done!")
                 elif M["m00"] == 0 and self.state == 'chasing':
-                    rospy.loginfo_throttle(5, 'I lost you, Jerry!')
+                    rospy.loginfo_throttle(1, 'I lost you, Jerry!')
                     self.state = 'pursuit'
                     self.traversing = False
                     # self.set_waypoint(self.hider_coordinates[0], self.hider_coordinates[1], self.yaw)
                     # self.start_moving_to_waypoint()
                 elif M["m00"] == 0 and self.state == 'pursuit':
-                    if self.hider_distance < 0.5:
-                        rospy.loginfo_throttle(5, 'Where did you go!?')
+                    if self.spot_distance < 0.6:
+                        rospy.loginfo_throttle(1, 'Where did you go!?')
                         self.state = 'searching'
                         self.traversing = False
-                        lin_vec, ang_vec = 0., 0. # self.move_directly_to_hider()
+                        lin_vec, ang_vec = 0., 0. # Stop to reassess the situation.
                         self.pub.publish(Twist(linear=Point(x=lin_vec), angular=Point(z=ang_vec)))
                 else:
                     self.state = 'searching'
