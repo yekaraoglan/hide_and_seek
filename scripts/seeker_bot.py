@@ -53,6 +53,7 @@ import numpy as np
 import cv2
 import math
 import sys
+from std_msgs.msg import Bool
 
 # Helper functions:
 
@@ -106,20 +107,23 @@ class SeekerBot:
     def __init__(self):
         # Initialize the publisher:
         self.pub = rospy.Publisher('/seeker/cmd_vel', Twist, queue_size=10)
-
+        # Initialize the state:
+        self.state = 'waiting' # waiting, searching, chasing, pursuit
         # Initialize the subscriber:
         self.odom_sub = rospy.Subscriber('/seeker/odom', Odometry, self.odom_callback)
         self.scan_sub = rospy.Subscriber('/seeker/scan', LaserScan, self.scan_callback)
         self.cam_sub = rospy.Subscriber('/seeker/camera/rgb/image_raw', Image, self.image_callback)
         self.occ_grid_sub = rospy.Subscriber('/seeker/move_base/global_costmap/costmap', OccupancyGrid, self.costmap_callback)
 
+        self.game_start_sub = rospy.Subscriber('/start_game', Bool, self.game_start_callback)
+        self.game_end_sub = rospy.Subscriber('/end_game', Bool, self.game_end_callback)
+
         # Initialize the timer:
         self.start_time = rospy.get_time()
         self.waiting_time = 3.0 # seconds
         self.timer = rospy.Timer(rospy.Duration(self.waiting_time), self.timer_callback)
 
-        # Initialize the state:
-        self.state = 'waiting' # waiting, searching, chasing, pursuit
+        
 
         # Initialize the variables:
         # Seeker bot:
@@ -160,6 +164,9 @@ class SeekerBot:
         self.traversal_start_time = 0.0
         self.max_search_period = 120.0
 
+        self.is_game_ended = False
+        self.is_game_started = False
+
         # Initialize the safety protocol:
         # self.protocol = 'none' # none, pursuit, evasion
 
@@ -167,6 +174,13 @@ class SeekerBot:
         # ...
         
     ### Methods:
+        
+    def game_start_callback(self, msg):
+        self.is_game_started = True
+
+    def game_end_callback(self, msg):
+        self.is_game_ended = True
+        rospy.signal_shutdown("Game ended")
         
     def calculate_hider_coordinates(self):
         # Calculate the hider bot coordinates using the distance and the angle and the seeker bot coordinates.
@@ -620,7 +634,7 @@ class SeekerBot:
         # Calculate the elapsed time.
         elapsed_time = rospy.get_time() - self.start_time
         # Check if the waiting time is over.
-        if  elapsed_time > self.waiting_time and self.state == 'waiting':
+        if  self.is_game_started and self.state == 'waiting':
             self.state = 'searching'
             self.traversing = False
             rospy.loginfo('Waiting time is over!')

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import rospy
 import random
@@ -13,6 +13,7 @@ import numpy as np
 from nav_msgs.msg import OccupancyGrid
 from scipy import ndimage, signal
 from matplotlib import pyplot as plt
+from std_msgs.msg import Bool
 class Args:
     robot = "hider"
     x = None
@@ -26,6 +27,8 @@ class HiderBot:
         rospy.Subscriber('/hider/odom', Odometry, self.odometry_callback)
         rospy.Subscriber('/hider/scan', LaserScan, self.scan_callback)
         rospy.Subscriber('/hider/move_base/global_costmap/costmap', OccupancyGrid, self.map_callback)
+        rospy.Subscriber('/start_game', Bool, self.start_game_callback)
+        rospy.Subscriber('/end_game', Bool, self.start_game_callback)
         self.cmd_vel_pub = rospy.Publisher('/hider/cmd_vel', Twist, queue_size=10)
         self.timer = rospy.Timer(rospy.Duration(1), self.timer_callback)
         self.rate = rospy.Rate(10)  # 10 Hz
@@ -39,12 +42,22 @@ class HiderBot:
         self.map_data = None
         self.start_yaw = 0
         self.centers = None
-        
+        self.is_game_started = False
+        self.is_game_ended = False
+        self.current_pose = None
+
+    def start_game_callback(self, msg):
+        self.is_game_started = True
+
+    def end_game_callback(self, msg):
+        self.is_game_ended = True
+        rospy.signal_shutdown("Game ended")
+
     def timer_callback(self, event):
         rospy.loginfo_throttle(1, self.timeState)
         elapsed_time = time.time() - self.start_time
         idle_time = time.time() - self.idle_time
-        if elapsed_time > 15 and self.timeState != "Hiding" and self.timeState != "Moving to spot":
+        if self.is_game_started and self.timeState != "Hiding" and self.timeState != "Moving to spot":
             self.timeState = "Finding spot"
         if self.timeState == "Hiding":
             if idle_time > 5:
@@ -125,7 +138,7 @@ class HiderBot:
 
     def odometry_callback(self, msg):
         if self.timeState == "Exploring" or self.timeState == "Hiding":
-            pass
+            self.current_pose = (msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z)
         if self.timeState == "Finding spot":
             self.twist.linear.x = 0.0
             self.twist.angular.z = 0.0

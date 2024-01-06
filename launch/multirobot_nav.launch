@@ -5,6 +5,13 @@
     <arg name="base_global_planner" default="navfn/NavfnROS"/>
     <arg name="base_local_planner" default="dwa_local_planner/DWAPlannerROS"/>
     <node pkg="tf" type="static_transform_publisher" name="map_to_odom" args="0 0 0 0 0 0 /map /odom 10" />
+    
+    <node pkg="hide_and_seek" type="referee_node.py" name="referee_node" output="screen">
+        <param name="game_duration" value="60" />
+        <param name="caught_distance" value="1.0" />
+        <param name="preparation_time" value="15" />
+    </node>
+
     <group ns="hider">
         <node pkg="hide_and_seek" type="odom_to_baselink.py" name="odom_to_baselink" output="screen">
             <param name="robot_name" value="$(arg first_tb3)" />
@@ -32,6 +39,7 @@
             <remap from="/cmd_vel" to="$(arg first_tb3)/cmd_vel" />
         
           </node>
+          <node pkg="hide_and_seek" type="hider_bot.py" name="hider_node" output="screen"/>
     </group>
     <group ns="seeker">
         <node pkg="hide_and_seek" type="odom_to_baselink.py" name="odom_to_baselink" output="screen">
@@ -60,6 +68,7 @@
             <remap from="/cmd_vel" to="$(arg second_tb3)/cmd_vel" />
         
           </node>
+          <node pkg="hide_and_seek" type="seeker_bot.py" name="seeker_node" output="screen"/>
     </group>
 
     <node pkg="rviz" type="rviz" name="rviz" args="-d $(find hide_and_seek)/rviz/config.rviz" />
